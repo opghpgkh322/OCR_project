@@ -1,44 +1,29 @@
 import hashlib
-import json
 import tarfile
 import zipfile
 from pathlib import Path
 
 import requests
 
-DEFAULT_DATASETS = [
+DATASETS = [
     {
-        "name": "handwritten-cyrillic-egorsmkv",
-        "urls": [
-            "https://codeload.github.com/egorsmkv/handwritten-cyrillic/zip/refs/heads/main",
-            "https://codeload.github.com/egorsmkv/handwritten-cyrillic/zip/refs/heads/master",
-        ],
+        "name": "handwritten-cyrillic",
+        "url": "https://github.com/egorsmkv/handwritten-cyrillic/archive/refs/heads/master.zip",
         "type": "zip",
     },
     {
-        "name": "russian-handwriting-dataset",
-        "urls": [
-            "https://codeload.github.com/konstantinlevin/russian-handwriting-dataset/zip/refs/heads/main",
-            "https://codeload.github.com/konstantinlevin/russian-handwriting-dataset/zip/refs/heads/master",
-        ],
+        "name": "russian-handwriting",
+        "url": "https://github.com/konstantinlevin/russian-handwriting-dataset/archive/refs/heads/master.zip",
         "type": "zip",
     },
     {
         "name": "printed-cyrillic-fonts",
-        "urls": [
-            "https://codeload.github.com/dimaba/fonts-dataset/zip/refs/heads/main",
-            "https://codeload.github.com/dimaba/fonts-dataset/zip/refs/heads/master",
-        ],
-        "type": "zip",
-    },
-    {
-        "name": "google-fonts",
-        "urls": ["https://codeload.github.com/google/fonts/zip/refs/heads/main"],
+        "url": "https://github.com/dimaba/fonts-dataset/archive/refs/heads/master.zip",
         "type": "zip",
     },
     {
         "name": "digits-mnist",
-        "urls": ["https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz"],
+        "url": "https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz",
         "type": "npz",
     },
 ]
@@ -75,33 +60,16 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     target_root = root / "external_database"
     target_root.mkdir(parents=True, exist_ok=True)
-    config_path = target_root / "datasets.json"
-    if config_path.exists():
-        datasets = json.loads(config_path.read_text(encoding="utf-8"))
-    else:
-        datasets = DEFAULT_DATASETS
-        config_path.write_text(json.dumps(DEFAULT_DATASETS, ensure_ascii=False, indent=2), encoding="utf-8")
 
     report_lines = []
-    for dataset in datasets:
+    for dataset in DATASETS:
         name = dataset["name"]
-        urls = dataset.get("urls") or [dataset.get("url")]
+        url = dataset["url"]
         file_type = dataset["type"]
         dest = target_root / f"{name}.{file_type}"
         print(f"Downloading {name}...")
         try:
-            last_error: Exception | None = None
-            for url in urls:
-                if not url:
-                    continue
-                try:
-                    download_file(url, dest)
-                    last_error = None
-                    break
-                except Exception as exc:
-                    last_error = exc
-            if last_error is not None:
-                raise last_error
+            download_file(url, dest)
         except Exception as exc:
             print(f"Failed to download {name}: {exc}")
             report_lines.append(f"{name}: download failed ({exc})")
