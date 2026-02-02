@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 
 from ocr_app.config import CellConfig, SheetConfig
-from ocr_app.preprocessing import align_image, load_image
+from ocr_app.preprocessing import load_image
 
 WINDOW_NAME = "OCR Configurator"
 
@@ -46,12 +46,15 @@ def draw_preview(image, cells):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Configure OCR form cells.")
-    parser.add_argument("--image", required=True, help="Path to a sample scan image.")
+    parser.add_argument(
+        "--image",
+        required=True,
+        help="Path to an aligned form image (use the alignment step first).",
+    )
     parser.add_argument("--output", default="sheet_config.json", help="Path to save config JSON.")
     args = parser.parse_args()
 
-    image = load_image(args.image)
-    aligned = align_image(image)
+    aligned = load_image(args.image)
 
     collector = ClickCollector()
     cells: list[CellConfig] = []
