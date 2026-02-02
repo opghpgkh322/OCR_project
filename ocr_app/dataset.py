@@ -55,7 +55,8 @@ def load_images(items: list[DatasetItem], image_size: tuple[int, int]) -> tuple[
     features = []
     targets = []
     for item in items:
-        image = cv2.imread(str(item.path))
+        data = np.fromfile(str(item.path), dtype=np.uint8)
+        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if image is None:
             continue
         processed = preprocess_cell(image, image_size)
