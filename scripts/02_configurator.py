@@ -48,7 +48,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Configure OCR form cells.")
     parser.add_argument(
         "--image",
-        required=True,
+        default="aligned_form.jpg",
         help="Path to an aligned form image (use the alignment step first).",
     )
     parser.add_argument("--output", default="sheet_config.json", help="Path to save config JSON.")
