@@ -7,44 +7,36 @@ from ocr_app.config import CellConfig, SheetConfig
 from ocr_app.preprocessing import align_image, load_image
 
 WINDOW_NAME = "OCR Configurator"
-MAX_DISPLAY_WIDTH = 1400
-MAX_DISPLAY_HEIGHT = 900
 
 
 class ClickCollector:
-    def __init__(self, scale: float) -> None:
+    def __init__(self) -> None:
         self.points: list[tuple[int, int]] = []
-        self.scale = scale
 
     def reset(self) -> None:
         self.points = []
 
     def on_click(self, event, x, y, _flags, _params):
         if event == cv2.EVENT_LBUTTONDOWN:
-            orig_x = int(x / self.scale)
-            orig_y = int(y / self.scale)
-            self.points.append((orig_x, orig_y))
+            self.points.append((x, y))
 
 
-def draw_preview(image, cells, scale: float):
-    if scale != 1.0:
-        preview = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    else:
-        preview = image.copy()
+def draw_preview(image, cells):
+    preview = image.copy()
     for cell in cells:
         cv2.rectangle(
             preview,
-            (int(cell.x * scale), int(cell.y * scale)),
-            (int((cell.x + cell.w) * scale), int((cell.y + cell.h) * scale)),
+            (cell.x, cell.y),
+            (cell.x + cell.w, cell.y + cell.h),
             (0, 255, 0),
             2,
         )
         cv2.putText(
             preview,
             f"{cell.label}:{cell.index}",
-            (int(cell.x * scale), max(10, int((cell.y - 5) * scale))),
+            (cell.x, max(10, cell.y - 5)),
             cv2.FONT_HERSHEY_SIMPLEX,
-            max(0.4, 0.5 * scale),
+            0.5,
             (0, 255, 0),
             1,
             cv2.LINE_AA,
@@ -52,51 +44,18 @@ def draw_preview(image, cells, scale: float):
     return preview
 
 
-def compute_scale(image) -> float:
-    return min(
-        MAX_DISPLAY_WIDTH / image.shape[1],
-        MAX_DISPLAY_HEIGHT / image.shape[0],
-        1.0,
-    )
-
-
-def is_mostly_blank(image) -> bool:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    mean_val, std_val = cv2.meanStdDev(gray)
-    mean_scalar = float(mean_val[0][0])
-    std_scalar = float(std_val[0][0])
-    return mean_scalar > 245.0 and std_scalar < 5.0
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Configure OCR form cells.")
-    parser.add_argument("--image", help="Path to a sample scan image.")
+    parser.add_argument("--image", required=True, help="Path to a sample scan image.")
     parser.add_argument("--output", default="sheet_config.json", help="Path to save config JSON.")
-    args, _unknown = parser.parse_known_args()
+    args = parser.parse_args()
 
-    image_path = (args.image or "").strip() or input("Path to sample scan image: ").strip()
-    if not image_path:
-        raise SystemExit("Image path is required.")
-    original = load_image(image_path)
-    aligned = None
-    try:
-        aligned = align_image(original)
-        if aligned is None or aligned.size == 0:
-            raise ValueError("Aligned image is empty.")
-        if is_mostly_blank(aligned):
-            raise ValueError("Aligned image looks blank.")
-    except Exception as exc:
-        print(f"Alignment failed ({exc}).")
-        aligned = None
+    image = load_image(args.image)
+    aligned = align_image(image)
 
-    if aligned is None:
-        raise SystemExit("Failed to align image using marker squares. Check marker visibility.")
-
-    current_image = aligned
-    scale = compute_scale(current_image)
-    collector = ClickCollector(scale)
+    collector = ClickCollector()
     cells: list[CellConfig] = []
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WINDOW_NAME)
     cv2.setMouseCallback(WINDOW_NAME, collector.on_click)
 
     print("Instructions:")
@@ -106,7 +65,7 @@ def main() -> None:
     print("- Press 'q' in the image window when finished.")
 
     while True:
-        preview = draw_preview(current_image, cells, scale)
+        preview = draw_preview(aligned, cells)
         cv2.imshow(WINDOW_NAME, preview)
         key = cv2.waitKey(50) & 0xFF
         if key == ord("q"):
@@ -129,8 +88,8 @@ def main() -> None:
 
     config = SheetConfig(
         version=1,
-        image_width=current_image.shape[1],
-        image_height=current_image.shape[0],
+        image_width=aligned.shape[1],
+        image_height=aligned.shape[0],
         cells=cells,
     )
     output_path = Path(args.output)
