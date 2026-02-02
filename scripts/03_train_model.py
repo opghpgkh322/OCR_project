@@ -9,8 +9,14 @@ from ocr_app.model import build_model, save_labels
 
 
 def main() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    default_dataset_root = repo_root / "dataset_external"
     parser = argparse.ArgumentParser(description="Train OCR model on external datasets.")
-    parser.add_argument("--data-root", default="dataset_external", help="Root folder with datasets.")
+    parser.add_argument(
+        "--data-root",
+        default=str(default_dataset_root),
+        help="Root folder with datasets.",
+    )
     parser.add_argument("--image-size", type=int, default=32, help="Square size for model inputs.")
     parser.add_argument("--epochs", type=int, default=60, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training.")
