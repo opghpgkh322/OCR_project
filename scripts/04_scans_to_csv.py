@@ -20,11 +20,28 @@ def group_cells(cells):
 
 
 def main() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Run OCR on scans and export CSV.")
-    parser.add_argument("--scans", default="scans", help="Folder with scanned forms.")
-    parser.add_argument("--config", default="sheet_config.json", help="Path to config JSON.")
-    parser.add_argument("--model-dir", default="model", help="Directory with trained model.")
-    parser.add_argument("--output", default="output.csv", help="Output CSV file.")
+    parser.add_argument(
+        "--scans",
+        default=str(repo_root / "scans"),
+        help="Folder with scanned forms.",
+    )
+    parser.add_argument(
+        "--config",
+        default=str(repo_root / "sheet_config.json"),
+        help="Path to config JSON.",
+    )
+    parser.add_argument(
+        "--model-dir",
+        default=str(repo_root / "scripts" / "model"),
+        help="Directory with trained model.",
+    )
+    parser.add_argument(
+        "--output",
+        default=str(repo_root / "output.csv"),
+        help="Output CSV file.",
+    )
     args = parser.parse_args()
 
     config = SheetConfig.load(args.config)
