@@ -7,7 +7,8 @@ class MarkerDetectionError(RuntimeError):
 
 
 def load_image(path: str) -> np.ndarray:
-    image = cv2.imread(path)
+    data = np.fromfile(path, dtype=np.uint8)
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(f"Unable to read image: {path}")
     return image
