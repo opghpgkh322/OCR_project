@@ -119,6 +119,11 @@ def align_image(image: np.ndarray, output_size: tuple[int, int] | None = None) -
     return warped
 
 
+def align_form(path: str, output_size: tuple[int, int] | None = None) -> np.ndarray:
+    image = load_image(path)
+    return align_image(image, output_size)
+
+
 def preprocess_cell(image: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)

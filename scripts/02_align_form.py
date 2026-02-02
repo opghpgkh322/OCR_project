@@ -2,7 +2,7 @@ import argparse
 
 import cv2
 
-from ocr_app.preprocessing import align_image, load_image
+from ocr_app.preprocessing import align_form
 
 
 def main() -> None:
@@ -19,8 +19,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    image = load_image(args.image)
-    aligned = align_image(image)
+    aligned = align_form(args.image)
     cv2.imwrite(args.output, aligned)
     print(f"Aligned image saved to {args.output}")
 

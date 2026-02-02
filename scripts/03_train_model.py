@@ -18,7 +18,7 @@ def main() -> None:
         help="Root folder with datasets.",
     )
     parser.add_argument("--image-size", type=int, default=32, help="Square size for model inputs.")
-    parser.add_argument("--epochs", type=int, default=60, help="Training epochs.")
+    parser.add_argument("--epochs", type=int, default=80, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training.")
     parser.add_argument("--train-ratio", type=float, default=0.9, help="Train/validation split ratio.")
     parser.add_argument("--output-dir", default="model", help="Directory to save model artifacts.")
@@ -54,13 +54,13 @@ def main() -> None:
         keras.callbacks.ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,
-            patience=5,
+            patience=6,
             min_lr=1e-6,
             verbose=1,
         ),
         keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=10,
+            patience=12,
             restore_best_weights=True,
             verbose=1,
         ),
