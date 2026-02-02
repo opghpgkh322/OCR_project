@@ -24,24 +24,73 @@ def _order_points(points: np.ndarray) -> np.ndarray:
     return rect
 
 
-def detect_markers(image: np.ndarray, min_area: int = 500) -> np.ndarray:
+def _select_corner_markers(centers: np.ndarray, shape: tuple[int, int, int]) -> np.ndarray | None:
+    height, width = shape[:2]
+    corners = np.array(
+        [
+            [0, 0],
+            [width, 0],
+            [width, height],
+            [0, height],
+        ],
+        dtype="float32",
+    )
+    selected = []
+    used: set[int] = set()
+    for corner in corners:
+        distances = [
+            (idx, np.linalg.norm(center - corner))
+            for idx, center in enumerate(centers)
+            if idx not in used
+        ]
+        if not distances:
+            return None
+        closest_idx, _ = min(distances, key=lambda item: item[1])
+        used.add(closest_idx)
+        selected.append(centers[closest_idx])
+    return np.array(selected, dtype="float32")
+
+
+def detect_markers(
+    image: np.ndarray,
+    min_area: int = 500,
+    min_fill: float = 0.7,
+    aspect_tolerance: float = 0.25,
+) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    squares = []
+    candidates: list[np.ndarray] = []
     for contour in contours:
         area = cv2.contourArea(contour)
         if area < min_area:
             continue
         peri = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, 0.04 * peri, True)
-        if len(approx) == 4:
-            squares.append(approx.reshape(4, 2))
-    if len(squares) < 4:
+        if len(approx) != 4:
+            continue
+        x, y, w, h = cv2.boundingRect(approx)
+        if w == 0 or h == 0:
+            continue
+        aspect_ratio = w / float(h)
+        if not (1 - aspect_tolerance <= aspect_ratio <= 1 + aspect_tolerance):
+            continue
+        fill_ratio = area / float(w * h)
+        if fill_ratio < min_fill:
+            continue
+        candidates.append(approx.reshape(4, 2))
+
+    if len(candidates) < 4:
         raise MarkerDetectionError("Not enough marker squares detected.")
-    squares = sorted(squares, key=cv2.contourArea, reverse=True)[:4]
-    centers = np.array([sq.mean(axis=0) for sq in squares])
-    return _order_points(centers)
+
+    centers = np.array([square.mean(axis=0) for square in candidates])
+    corner_markers = _select_corner_markers(centers, image.shape)
+    if corner_markers is None:
+        squares = sorted(candidates, key=cv2.contourArea, reverse=True)[:4]
+        centers = np.array([sq.mean(axis=0) for sq in squares])
+        return _order_points(centers)
+    return _order_points(corner_markers)
 
 
 def align_image(image: np.ndarray, output_size: tuple[int, int] | None = None) -> np.ndarray:
