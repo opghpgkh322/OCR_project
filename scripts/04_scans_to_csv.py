@@ -27,25 +27,20 @@ def main() -> None:
     parser.add_argument("--output", default="output.csv", help="Output CSV file.")
     args = parser.parse_args()
 
-    scans_dir = input(f"Scans folder [{args.scans}]: ").strip() or args.scans
-    config_path = input(f"Config JSON [{args.config}]: ").strip() or args.config
-    model_dir_input = input(f"Model directory [{args.model_dir}]: ").strip() or args.model_dir
-    output_csv = input(f"Output CSV file [{args.output}]: ").strip() or args.output
-
-    config = SheetConfig.load(config_path)
+    config = SheetConfig.load(args.config)
     grouped = group_cells(config.cells)
 
-    model_dir = Path(model_dir_input)
+    model_dir = Path(args.model_dir)
     model = keras.models.load_model(model_dir / "ocr_model.keras")
     labels = load_labels(model_dir / "labels.json")
     image_size = np.load(model_dir / "image_size.npy")
     size = (int(image_size[0]), int(image_size[1]))
 
-    scan_paths = sorted(Path(scans_dir).glob("*"))
+    scan_paths = sorted(Path(args.scans).glob("*"))
     if not scan_paths:
         raise SystemExit("No scans found.")
 
-    with open(output_csv, "w", newline="", encoding="utf-8") as handle:
+    with open(args.output, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=["filename", "last_name", "first_name", "patronymic", "birth_date", "phone"],
@@ -76,7 +71,7 @@ def main() -> None:
 
             writer.writerow(row)
 
-    print(f"Saved CSV to {output_csv}")
+    print(f"Saved CSV to {args.output}")
 
 
 if __name__ == "__main__":

@@ -46,14 +46,11 @@ def draw_preview(image, cells):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Configure OCR form cells.")
-    parser.add_argument("--image", help="Path to a sample scan image.")
+    parser.add_argument("--image", required=True, help="Path to a sample scan image.")
     parser.add_argument("--output", default="sheet_config.json", help="Path to save config JSON.")
     args = parser.parse_args()
 
-    image_path = args.image or input("Path to sample scan image: ").strip()
-    if not image_path:
-        raise SystemExit("Image path is required.")
-    image = load_image(image_path)
+    image = load_image(args.image)
     aligned = align_image(image)
 
     collector = ClickCollector()
