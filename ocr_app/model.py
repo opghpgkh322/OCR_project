@@ -42,7 +42,14 @@ def build_model(
         ]
     )
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-    loss = keras.losses.SparseCategoricalCrossentropy(label_smoothing=label_smoothing)
+    if label_smoothing > 0:
+        try:
+            loss = keras.losses.SparseCategoricalCrossentropy(label_smoothing=label_smoothing)
+        except TypeError:
+            print("Label smoothing is not supported in this TensorFlow version. Continuing without it.")
+            loss = keras.losses.SparseCategoricalCrossentropy()
+    else:
+        loss = keras.losses.SparseCategoricalCrossentropy()
     model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
     return model
 
