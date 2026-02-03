@@ -6,18 +6,33 @@ from tensorflow import keras
 
 
 def build_model(num_classes: int, input_shape: tuple[int, int, int]) -> keras.Model:
+    augmentation = keras.Sequential(
+        [
+            keras.layers.RandomRotation(0.05),
+            keras.layers.RandomTranslation(0.05, 0.05),
+            keras.layers.RandomZoom(0.1),
+        ],
+        name="augmentation",
+    )
     model = keras.Sequential(
         [
             keras.layers.Input(shape=input_shape),
-            keras.layers.Conv2D(32, 3, activation="relu"),
+            augmentation,
+            keras.layers.Conv2D(32, 3, padding="same", activation="relu"),
+            keras.layers.BatchNormalization(),
             keras.layers.MaxPooling2D(),
-            keras.layers.Conv2D(64, 3, activation="relu"),
+            keras.layers.Conv2D(64, 3, padding="same", activation="relu"),
+            keras.layers.BatchNormalization(),
             keras.layers.MaxPooling2D(),
-            keras.layers.Conv2D(128, 3, activation="relu"),
+            keras.layers.Conv2D(128, 3, padding="same", activation="relu"),
+            keras.layers.BatchNormalization(),
             keras.layers.MaxPooling2D(),
-            keras.layers.Flatten(),
+            keras.layers.Conv2D(256, 3, padding="same", activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.GlobalAveragePooling2D(),
+            keras.layers.Dropout(0.4),
             keras.layers.Dense(256, activation="relu"),
-            keras.layers.Dropout(0.3),
+            keras.layers.Dropout(0.4),
             keras.layers.Dense(num_classes, activation="softmax"),
         ]
     )
