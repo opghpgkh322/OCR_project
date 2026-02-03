@@ -1,6 +1,5 @@
 import json
 import random
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,19 +72,3 @@ def load_images(
     x = np.expand_dims(np.array(features), axis=-1)
     y = np.array(targets)
     return x, y, labels
-
-
-def infer_style_key(path: Path) -> str:
-    stem = path.stem
-    match = re.match(r"^(.*?)(?:[-_ ]?\d+)$", stem)
-    key = match.group(1) if match else stem
-    key = key.rstrip("-_ ").lower()
-    return key or stem.lower()
-
-
-def group_items_by_style(items: list[DatasetItem]) -> dict[str, list[DatasetItem]]:
-    groups: dict[str, list[DatasetItem]] = {}
-    for item in items:
-        key = infer_style_key(item.path)
-        groups.setdefault(key, []).append(item)
-    return groups

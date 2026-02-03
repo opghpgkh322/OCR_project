@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from tensorflow import keras
 
-from ocr_app.dataset import build_dataset_index, group_items_by_style, load_images, split_items, write_dataset_index
+from ocr_app.dataset import DatasetItem, build_dataset_index, load_images, split_items, write_dataset_index
 from ocr_app.model import build_model, save_labels
 
 
@@ -20,13 +20,8 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=32, help="Square size for model inputs.")
     parser.add_argument("--epochs", type=int, default=80, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training.")
-    parser.add_argument("--train-ratio", type=float, default=0.9, help="Train/validation split ratio.")
-    parser.add_argument(
-        "--split-by-style",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Train sequentially per filename style group.",
-    )
+    parser.add_argument("--train-ratio", type=float, default=0.85, help="Train/validation split ratio.")
+    parser.add_argument("--rounds", type=int, default=3, help="How many random splits to train per folder.")
     parser.add_argument("--output-dir", default="model", help="Directory to save model artifacts.")
     args = parser.parse_args()
 
@@ -71,16 +66,22 @@ def main() -> None:
             ),
         ]
 
-    if args.split_by_style:
-        style_groups = group_items_by_style(items)
-    else:
-        style_groups = {"all": items}
+    items_by_label: dict[str, list[DatasetItem]] = {}
+    for item in items:
+        items_by_label.setdefault(item.label, []).append(item)
 
-    sorted_groups = sorted(style_groups.items(), key=lambda item: len(item[1]), reverse=True)
-    for index, (style_key, style_items) in enumerate(sorted_groups, start=1):
-        stage_name = f"stage_{index}_{style_key}" if len(sorted_groups) > 1 else "all"
-        print(f"Training stage {index}/{len(sorted_groups)}: {style_key} ({len(style_items)} samples)")
-        train_items, val_items = split_items(style_items, train_ratio=args.train_ratio)
+    for round_index in range(1, args.rounds + 1):
+        train_items: list[DatasetItem] = []
+        val_items: list[DatasetItem] = []
+        for label, label_items in items_by_label.items():
+            train_split, val_split = split_items(label_items, train_ratio=args.train_ratio)
+            train_items.extend(train_split)
+            val_items.extend(val_split)
+            print(
+                f"Round {round_index}/{args.rounds} label {label}: "
+                f"{len(train_split)} train / {len(val_split)} val"
+            )
+        stage_name = f"round_{round_index}"
         x_train, y_train, _ = load_images(train_items, (args.image_size, args.image_size), labels=labels)
         x_val, y_val, _ = load_images(val_items, (args.image_size, args.image_size), labels=labels)
         model.fit(
