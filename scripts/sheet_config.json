@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "image_width": 2297,
+  "image_height": 645,
+  "cells": [
+    {
+      "label": "last_name",
+      "index": 1,
+      "x": 71,
+      "y": 1,
+      "w": 84,
+      "h": 62
+    }
+  ]
+}
