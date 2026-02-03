@@ -1,10 +1,19 @@
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
 from tensorflow import keras
 
-from ocr_app.dataset import DatasetItem, build_dataset_index, load_images, split_items, write_dataset_index
+from ocr_app.dataset import (
+    DatasetItem,
+    build_dataset_index,
+    compute_ahash,
+    load_images,
+    split_items,
+    style_bucket_from_hash,
+    write_dataset_index,
+)
 from ocr_app.model import build_model, save_labels
 
 
@@ -22,6 +31,17 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training.")
     parser.add_argument("--train-ratio", type=float, default=0.9, help="Train/validation split ratio.")
     parser.add_argument("--rounds", type=int, default=3, help="How many random splits to train per folder.")
+    parser.add_argument(
+        "--style-bucket-bits",
+        type=int,
+        default=8,
+        help="How many high-order hash bits to use for style buckets.",
+    )
+    parser.add_argument(
+        "--style-cache",
+        default=None,
+        help="Path to cache style buckets (defaults to data root).",
+    )
     parser.add_argument(
         "--log-every",
         type=int,
@@ -76,16 +96,40 @@ def main() -> None:
     for item in items:
         items_by_label.setdefault(item.label, []).append(item)
 
+    style_cache_path = Path(args.style_cache) if args.style_cache else data_root / "style_buckets.json"
+    style_cache: dict[str, int] = {}
+    if style_cache_path.exists():
+        style_cache = json.loads(style_cache_path.read_text(encoding="utf-8"))
+    missing_items = [item for item in items if str(item.path) not in style_cache]
+    if missing_items:
+        print(f"Computing style buckets for {len(missing_items)} images...")
+        for index, item in enumerate(missing_items, start=1):
+            hash_value = compute_ahash(item.path)
+            bucket = style_bucket_from_hash(hash_value, bucket_bits=args.style_bucket_bits)
+            style_cache[str(item.path)] = bucket
+            if args.log_every and index % args.log_every == 0:
+                print(f"Hashed {index}/{len(missing_items)} images...")
+        style_cache_path.write_text(json.dumps(style_cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
     for round_index in range(1, args.rounds + 1):
         train_items: list[DatasetItem] = []
         val_items: list[DatasetItem] = []
         for label, label_items in items_by_label.items():
-            train_split, val_split = split_items(label_items, train_ratio=args.train_ratio)
-            train_items.extend(train_split)
-            val_items.extend(val_split)
+            items_by_bucket: dict[int, list[DatasetItem]] = {}
+            for item in label_items:
+                bucket = style_cache[str(item.path)]
+                items_by_bucket.setdefault(bucket, []).append(item)
+            label_train = 0
+            label_val = 0
+            for bucket_items in items_by_bucket.values():
+                train_split, val_split = split_items(bucket_items, train_ratio=args.train_ratio)
+                train_items.extend(train_split)
+                val_items.extend(val_split)
+                label_train += len(train_split)
+                label_val += len(val_split)
             print(
                 f"Round {round_index}/{args.rounds} label {label}: "
-                f"{len(train_split)} train / {len(val_split)} val"
+                f"{label_train} train / {label_val} val"
             )
         stage_name = f"round_{round_index}"
         print(f"Loading training images for round {round_index}...")

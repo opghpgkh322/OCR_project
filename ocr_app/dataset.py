@@ -75,3 +75,23 @@ def load_images(
     x = np.expand_dims(np.array(features), axis=-1)
     y = np.array(targets)
     return x, y, labels
+
+
+def compute_ahash(path: Path, hash_size: int = 8) -> int:
+    data = np.fromfile(str(path), dtype=np.uint8)
+    image = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return 0
+    resized = cv2.resize(image, (hash_size, hash_size), interpolation=cv2.INTER_AREA)
+    mean = resized.mean()
+    bits = resized > mean
+    value = 0
+    for bit in bits.flatten():
+        value = (value << 1) | int(bit)
+    return value
+
+
+def style_bucket_from_hash(hash_value: int, bucket_bits: int = 8, hash_size: int = 8) -> int:
+    total_bits = hash_size * hash_size
+    shift = max(total_bits - bucket_bits, 0)
+    return hash_value >> shift
