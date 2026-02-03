@@ -5,7 +5,12 @@ import numpy as np
 from tensorflow import keras
 
 
-def build_model(num_classes: int, input_shape: tuple[int, int, int]) -> keras.Model:
+def build_model(
+    num_classes: int,
+    input_shape: tuple[int, int, int],
+    learning_rate: float = 1e-3,
+    label_smoothing: float = 0.0,
+) -> keras.Model:
     augmentation = keras.Sequential(
         [
             keras.layers.RandomRotation(0.05),
@@ -36,7 +41,9 @@ def build_model(num_classes: int, input_shape: tuple[int, int, int]) -> keras.Mo
             keras.layers.Dense(num_classes, activation="softmax"),
         ]
     )
-    model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    loss = keras.losses.SparseCategoricalCrossentropy(label_smoothing=label_smoothing)
+    model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
     return model
 
 
