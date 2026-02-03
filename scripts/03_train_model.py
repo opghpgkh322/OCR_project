@@ -20,8 +20,14 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=32, help="Square size for model inputs.")
     parser.add_argument("--epochs", type=int, default=80, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training.")
-    parser.add_argument("--train-ratio", type=float, default=0.85, help="Train/validation split ratio.")
+    parser.add_argument("--train-ratio", type=float, default=0.9, help="Train/validation split ratio.")
     parser.add_argument("--rounds", type=int, default=3, help="How many random splits to train per folder.")
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=1000,
+        help="Log image loading progress every N images (0 to disable).",
+    )
     parser.add_argument("--output-dir", default="model", help="Directory to save model artifacts.")
     args = parser.parse_args()
 
@@ -82,8 +88,20 @@ def main() -> None:
                 f"{len(train_split)} train / {len(val_split)} val"
             )
         stage_name = f"round_{round_index}"
-        x_train, y_train, _ = load_images(train_items, (args.image_size, args.image_size), labels=labels)
-        x_val, y_val, _ = load_images(val_items, (args.image_size, args.image_size), labels=labels)
+        print(f"Loading training images for round {round_index}...")
+        x_train, y_train, _ = load_images(
+            train_items,
+            (args.image_size, args.image_size),
+            labels=labels,
+            log_every=args.log_every,
+        )
+        print(f"Loading validation images for round {round_index}...")
+        x_val, y_val, _ = load_images(
+            val_items,
+            (args.image_size, args.image_size),
+            labels=labels,
+            log_every=args.log_every,
+        )
         model.fit(
             x_train,
             y_train,

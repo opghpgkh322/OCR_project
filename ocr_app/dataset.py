@@ -53,13 +53,14 @@ def load_images(
     items: list[DatasetItem],
     image_size: tuple[int, int],
     labels: list[str] | None = None,
+    log_every: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     if labels is None:
         labels = sorted({item.label for item in items})
     label_to_index = {label: i for i, label in enumerate(labels)}
     features = []
     targets = []
-    for item in items:
+    for index, item in enumerate(items, start=1):
         data = np.fromfile(str(item.path), dtype=np.uint8)
         image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if image is None:
@@ -67,6 +68,8 @@ def load_images(
         processed = preprocess_cell(image, image_size)
         features.append(processed)
         targets.append(label_to_index[item.label])
+        if log_every and index % log_every == 0:
+            print(f"Loaded {index}/{len(items)} images...")
     if not features:
         raise RuntimeError("No images loaded from dataset.")
     x = np.expand_dims(np.array(features), axis=-1)
