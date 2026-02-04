@@ -75,12 +75,10 @@ def train_model(config: TrainingConfig) -> None:
         }
 
     model = build_cnn((config.image_size, config.image_size, 1), len(labels))
-    total_steps = int(np.ceil(len(x_train) / config.batch_size) * config.epochs)
     compile_model(
         model,
         learning_rate=8e-4,
         label_smoothing=config.label_smoothing,
-        total_steps=total_steps,
     )
 
     config.output_dir.mkdir(parents=True, exist_ok=True)

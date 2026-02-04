@@ -45,10 +45,8 @@ def compile_model(
     model: keras.Model,
     learning_rate: float,
     label_smoothing: float,
-    total_steps: int,
 ) -> None:
-    schedule = keras.optimizers.schedules.CosineDecay(learning_rate, total_steps)
-    optimizer = keras.optimizers.Adam(learning_rate=schedule)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     try:
         loss = keras.losses.SparseCategoricalCrossentropy(label_smoothing=label_smoothing)
     except TypeError:
