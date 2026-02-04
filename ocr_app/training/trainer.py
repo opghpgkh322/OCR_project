@@ -14,8 +14,8 @@ from .model import build_cnn, compile_model
 @dataclass
 class TrainingConfig:
     data_root: Path
-    image_size: int = 32
-    epochs: int = 24
+    image_size: int = 64
+    epochs: int = 36
     batch_size: int = 64
     train_ratio: float = 0.9
     style_clusters: int = 3
@@ -23,6 +23,7 @@ class TrainingConfig:
     label_smoothing: float = 0.03
     output_dir: Path = Path("model")
     log_every: int = 1000
+    use_class_weight: bool = True
 
 
 def train_model(config: TrainingConfig) -> None:
@@ -57,13 +58,21 @@ def train_model(config: TrainingConfig) -> None:
 
     counts = np.bincount(y_train, minlength=len(labels))
     total = counts.sum()
-    class_weight = {
-        index: (total / (len(labels) * count)) if count > 0 else 0.0
-        for index, count in enumerate(counts)
-    }
+    class_weight = None
+    if config.use_class_weight:
+        class_weight = {
+            index: (total / (len(labels) * count)) if count > 0 else 0.0
+            for index, count in enumerate(counts)
+        }
 
     model = build_cnn((config.image_size, config.image_size, 1), len(labels))
-    compile_model(model, learning_rate=1e-3, label_smoothing=config.label_smoothing)
+    total_steps = int(np.ceil(len(x_train) / config.batch_size) * config.epochs)
+    compile_model(
+        model,
+        learning_rate=8e-4,
+        label_smoothing=config.label_smoothing,
+        total_steps=total_steps,
+    )
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = config.output_dir / "ocr_model.keras"
@@ -85,7 +94,7 @@ def train_model(config: TrainingConfig) -> None:
         ),
         keras.callbacks.EarlyStopping(
             monitor="val_accuracy",
-            patience=6,
+            patience=8,
             restore_best_weights=True,
             verbose=1,
         ),
