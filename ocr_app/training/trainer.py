@@ -45,19 +45,25 @@ def train_model(config: TrainingConfig) -> None:
     train_items, val_items = stratified_split(items, style_groups, config.train_ratio, config.seed)
 
     print(f"Loading training images ({len(train_items)})...")
-    x_train, y_train = load_images(
-        train_items,
-        (config.image_size, config.image_size),
-        labels,
-        log_every=config.log_every,
-    )
+    try:
+        x_train, y_train = load_images(
+            train_items,
+            (config.image_size, config.image_size),
+            labels,
+            log_every=config.log_every,
+        )
+    except TypeError:
+        x_train, y_train = load_images(train_items, (config.image_size, config.image_size), labels)
     print(f"Loading validation images ({len(val_items)})...")
-    x_val, y_val = load_images(
-        val_items,
-        (config.image_size, config.image_size),
-        labels,
-        log_every=config.log_every,
-    )
+    try:
+        x_val, y_val = load_images(
+            val_items,
+            (config.image_size, config.image_size),
+            labels,
+            log_every=config.log_every,
+        )
+    except TypeError:
+        x_val, y_val = load_images(val_items, (config.image_size, config.image_size), labels)
 
     counts = np.bincount(y_train, minlength=len(labels))
     total = counts.sum()
