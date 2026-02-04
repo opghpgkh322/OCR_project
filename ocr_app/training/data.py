@@ -26,7 +26,11 @@ def scan_dataset(root: Path, allowed_ext: tuple[str, ...] = (".png", ".jpg", ".j
 
 
 def extract_style_features(image: np.ndarray) -> np.ndarray:
-    resized = cv2.resize(image, (32, 32), interpolation=cv2.INTER_AREA)
+    if image.dtype != np.uint8:
+        scaled = np.clip(image * 255.0, 0, 255).astype(np.uint8)
+    else:
+        scaled = image
+    resized = cv2.resize(scaled, (32, 32), interpolation=cv2.INTER_AREA)
     mean = float(resized.mean())
     std = float(resized.std())
     _, thresh = cv2.threshold(resized, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
