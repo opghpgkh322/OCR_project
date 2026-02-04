@@ -57,9 +57,14 @@ def extract_style_features(image: np.ndarray) -> np.ndarray:
     )
 
 
-def compute_style_matrix(items: list[DatasetItem], image_size: tuple[int, int]) -> np.ndarray:
+def compute_style_matrix(
+    items: list[DatasetItem],
+    image_size: tuple[int, int],
+    log_every: int = 0,
+) -> np.ndarray:
     features: list[np.ndarray] = []
-    for item in items:
+    total = len(items)
+    for index, item in enumerate(items, start=1):
         data = np.fromfile(str(item.path), dtype=np.uint8)
         image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if image is None:
@@ -67,6 +72,8 @@ def compute_style_matrix(items: list[DatasetItem], image_size: tuple[int, int]) 
             continue
         processed = preprocess_cell(image, image_size)
         features.append(extract_style_features(processed))
+        if log_every and index % log_every == 0:
+            print(f"Style features: {index}/{total} images processed...")
     return np.vstack(features)
 
 
@@ -123,11 +130,13 @@ def load_images(
     items: list[DatasetItem],
     image_size: tuple[int, int],
     labels: list[str],
+    log_every: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     label_to_index = {label: i for i, label in enumerate(labels)}
     features: list[np.ndarray] = []
     targets: list[int] = []
-    for item in items:
+    total = len(items)
+    for index, item in enumerate(items, start=1):
         data = np.fromfile(str(item.path), dtype=np.uint8)
         image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if image is None:
@@ -135,6 +144,8 @@ def load_images(
         processed = preprocess_cell(image, image_size)
         features.append(processed)
         targets.append(label_to_index[item.label])
+        if log_every and index % log_every == 0:
+            print(f"Loaded {index}/{total} images...")
     x = np.expand_dims(np.array(features), axis=-1)
     y = np.array(targets)
     return x, y

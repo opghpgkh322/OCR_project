@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--style-clusters", type=int, default=3, help="Style cluster count.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for splits.")
     parser.add_argument("--label-smoothing", type=float, default=0.03, help="Label smoothing factor.")
+    parser.add_argument("--log-every", type=int, default=1000, help="Log progress every N images.")
     parser.add_argument("--output-dir", default="model", help="Directory to save model artifacts.")
     args = parser.parse_args()
 
@@ -29,6 +30,7 @@ def main() -> None:
         style_clusters=args.style_clusters,
         seed=args.seed,
         label_smoothing=args.label_smoothing,
+        log_every=args.log_every,
         output_dir=Path(args.output_dir),
     )
     train_model(config)

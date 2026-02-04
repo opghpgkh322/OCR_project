@@ -22,6 +22,7 @@ class TrainingConfig:
     seed: int = 42
     label_smoothing: float = 0.03
     output_dir: Path = Path("model")
+    log_every: int = 1000
 
 
 def train_model(config: TrainingConfig) -> None:
@@ -30,12 +31,29 @@ def train_model(config: TrainingConfig) -> None:
         raise SystemExit("No dataset images found. Check dataset_external.")
 
     labels = sorted({item.label for item in items})
-    style_features = compute_style_matrix(items, (config.image_size, config.image_size))
+    print(f"Computing style features for {len(items)} images...")
+    style_features = compute_style_matrix(
+        items,
+        (config.image_size, config.image_size),
+        log_every=config.log_every,
+    )
     style_groups = kmeans_cluster(style_features, k=config.style_clusters)
     train_items, val_items = stratified_split(items, style_groups, config.train_ratio, config.seed)
 
-    x_train, y_train = load_images(train_items, (config.image_size, config.image_size), labels)
-    x_val, y_val = load_images(val_items, (config.image_size, config.image_size), labels)
+    print(f"Loading training images ({len(train_items)})...")
+    x_train, y_train = load_images(
+        train_items,
+        (config.image_size, config.image_size),
+        labels,
+        log_every=config.log_every,
+    )
+    print(f"Loading validation images ({len(val_items)})...")
+    x_val, y_val = load_images(
+        val_items,
+        (config.image_size, config.image_size),
+        labels,
+        log_every=config.log_every,
+    )
 
     counts = np.bincount(y_train, minlength=len(labels))
     total = counts.sum()
