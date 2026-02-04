@@ -1,12 +1,6 @@
 import json
-import random
 from dataclasses import dataclass
 from pathlib import Path
-
-import cv2
-import numpy as np
-
-from .preprocessing import preprocess_cell
 
 
 @dataclass
@@ -42,56 +36,3 @@ def write_dataset_index(items: list[DatasetItem], index_path: Path) -> None:
     index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def split_items(items: list[DatasetItem], train_ratio: float = 0.9) -> tuple[list[DatasetItem], list[DatasetItem]]:
-    shuffled = items[:]
-    random.shuffle(shuffled)
-    split = int(len(shuffled) * train_ratio)
-    return shuffled[:split], shuffled[split:]
-
-
-def load_images(
-    items: list[DatasetItem],
-    image_size: tuple[int, int],
-    labels: list[str] | None = None,
-    log_every: int = 0,
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    if labels is None:
-        labels = sorted({item.label for item in items})
-    label_to_index = {label: i for i, label in enumerate(labels)}
-    features = []
-    targets = []
-    for index, item in enumerate(items, start=1):
-        data = np.fromfile(str(item.path), dtype=np.uint8)
-        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
-        if image is None:
-            continue
-        processed = preprocess_cell(image, image_size)
-        features.append(processed)
-        targets.append(label_to_index[item.label])
-        if log_every and index % log_every == 0:
-            print(f"Loaded {index}/{len(items)} images...")
-    if not features:
-        raise RuntimeError("No images loaded from dataset.")
-    x = np.expand_dims(np.array(features), axis=-1)
-    y = np.array(targets)
-    return x, y, labels
-
-
-def compute_ahash(path: Path, hash_size: int = 8) -> int:
-    data = np.fromfile(str(path), dtype=np.uint8)
-    image = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        return 0
-    resized = cv2.resize(image, (hash_size, hash_size), interpolation=cv2.INTER_AREA)
-    mean = resized.mean()
-    bits = resized > mean
-    value = 0
-    for bit in bits.flatten():
-        value = (value << 1) | int(bit)
-    return value
-
-
-def style_bucket_from_hash(hash_value: int, bucket_bits: int = 8, hash_size: int = 8) -> int:
-    total_bits = hash_size * hash_size
-    shift = max(total_bits - bucket_bits, 0)
-    return hash_value >> shift
