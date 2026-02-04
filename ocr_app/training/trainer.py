@@ -33,11 +33,14 @@ def train_model(config: TrainingConfig) -> None:
 
     labels = sorted({item.label for item in items})
     print(f"Computing style features for {len(items)} images...")
-    style_features = compute_style_matrix(
-        items,
-        (config.image_size, config.image_size),
-        config.log_every,
-    )
+    try:
+        style_features = compute_style_matrix(
+            items,
+            (config.image_size, config.image_size),
+            config.log_every,
+        )
+    except TypeError:
+        style_features = compute_style_matrix(items, (config.image_size, config.image_size))
     style_groups = kmeans_cluster(style_features, k=config.style_clusters)
     train_items, val_items = stratified_split(items, style_groups, config.train_ratio, config.seed)
 
