@@ -25,6 +25,15 @@ def scan_dataset(root: Path, allowed_ext: tuple[str, ...] = (".png", ".jpg", ".j
     return items
 
 
+def scan_datasets(roots: list[Path], allowed_ext: tuple[str, ...] = (".png", ".jpg", ".jpeg")) -> list[DatasetItem]:
+    items: list[DatasetItem] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        items.extend(scan_dataset(root, allowed_ext=allowed_ext))
+    return items
+
+
 def extract_style_features(image: np.ndarray) -> np.ndarray:
     if image.dtype != np.uint8:
         scaled = image.astype(np.float32)

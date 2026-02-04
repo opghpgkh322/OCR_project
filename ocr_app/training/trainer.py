@@ -7,13 +7,14 @@ from pathlib import Path
 import numpy as np
 from tensorflow import keras
 
-from .data import compute_style_matrix, kmeans_cluster, load_images, scan_dataset, stratified_split
+from .data import compute_style_matrix, kmeans_cluster, load_images, scan_datasets, stratified_split
 from .model import build_cnn, compile_model
 
 
 @dataclass
 class TrainingConfig:
     data_root: Path
+    review_root: Path | None = None
     image_size: int = 64
     epochs: int = 36
     batch_size: int = 64
@@ -27,7 +28,10 @@ class TrainingConfig:
 
 
 def train_model(config: TrainingConfig) -> None:
-    items = scan_dataset(config.data_root)
+    roots = [config.data_root]
+    if config.review_root:
+        roots.append(config.review_root)
+    items = scan_datasets(roots)
     if not items:
         raise SystemExit("No dataset images found. Check dataset_external.")
 

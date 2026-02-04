@@ -6,7 +6,8 @@ import numpy as np
 from tensorflow import keras
 
 from ocr_app.config import SheetConfig
-from ocr_app.model import load_labels, predict_labels
+from ocr_app.labels import DIGIT_LABELS, LABEL_TO_CHAR, LETTER_LABELS, choose_allowed_label
+from ocr_app.model import load_labels
 from ocr_app.preprocessing import align_image, load_image, preprocess_cell
 
 
@@ -19,41 +20,6 @@ def group_cells(cells):
     return grouped
 
 
-LABEL_TO_CHAR = {
-    "A_cyr": "А",
-    "B_cyr": "Б",
-    "V_cyr": "В",
-    "G_cyr": "Г",
-    "D_cyr": "Д",
-    "E_cyr": "Е",
-    "Yo_cyr": "Ё",
-    "Zh_cyr": "Ж",
-    "Z_cyr": "З",
-    "I_cyr": "И",
-    "Y_cyr": "Й",
-    "K_cyr": "К",
-    "L_cyr": "Л",
-    "M_cyr": "М",
-    "N_cyr": "Н",
-    "O_cyr": "О",
-    "P_cyr": "П",
-    "R_cyr": "Р",
-    "S_cyr": "С",
-    "T_cyr": "Т",
-    "U_cyr": "У",
-    "F_cyr": "Ф",
-    "Kh_cyr": "Х",
-    "Ts_cyr": "Ц",
-    "Ch_cyr": "Ч",
-    "Sh_cyr": "Ш",
-    "Shch_cyr": "Щ",
-    "Hard_cyr": "Ъ",
-    "Yery_cyr": "Ы",
-    "Soft_cyr": "Ь",
-    "E_rev_cyr": "Э",
-    "Yu_cyr": "Ю",
-    "Ya_cyr": "Я",
-}
 
 
 def main() -> None:
@@ -120,7 +86,16 @@ def main() -> None:
                     processed = preprocess_cell(crop, size)
                     crops.append(processed)
                 batch = np.expand_dims(np.array(crops), axis=-1)
-                predictions = predict_labels(model, labels, batch)
+                probabilities = model.predict(batch, verbose=0)
+                if label in {"last_name", "first_name", "patronymic"}:
+                    allowed = LETTER_LABELS
+                elif label in {"birth_date", "phone"}:
+                    allowed = DIGIT_LABELS
+                else:
+                    allowed = set(labels)
+                predictions = [
+                    choose_allowed_label(probabilities[idx], labels, allowed) for idx in range(len(crops))
+                ]
                 row[label] = "".join(LABEL_TO_CHAR.get(prediction, prediction) for prediction in predictions)
 
             writer.writerow(row)
