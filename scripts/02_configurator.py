@@ -115,9 +115,18 @@ def edit_cell_dialog(cell: CellConfig) -> None:
 
 
 def main() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Configure OCR form cells.")
-    parser.add_argument("--image", default="aligned_form.jpg", help="Path to an aligned form image.")
-    parser.add_argument("--output", default="sheet_config.json", help="Path to save config JSON.")
+    parser.add_argument(
+        "--image",
+        default=str(repo_root / "scripts" / "aligned_form.jpg"),
+        help="Path to an aligned form image.",
+    )
+    parser.add_argument(
+        "--output",
+        default=str(repo_root / "sheet_config.json"),
+        help="Path to save config JSON.",
+    )
     parser.add_argument("--scale", type=int, default=3, help="Initial zoom scale.")
     parser.add_argument("--inset", type=int, default=1, help="Inset in pixels to avoid touching borders.")
     args = parser.parse_args()
@@ -198,7 +207,7 @@ def main() -> None:
 
     cells = sorted(cells, key=lambda c: (c.label, c.index, c.y, c.x))
     config = SheetConfig(version=1, image_width=aligned.shape[1], image_height=aligned.shape[0], cells=cells)
-    output_path = Path(args.output)
+    output_path = Path(args.output).resolve()
     config.save(output_path)
     print(f"Saved {len(cells)} cells to {output_path}")
 
