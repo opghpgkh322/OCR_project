@@ -2,13 +2,13 @@ import argparse
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from ocr_app.config import CellConfig, SheetConfig
 from ocr_app.preprocessing import load_image
 
 WINDOW_NAME = "OCR Configurator"
 LABEL_OPTIONS = ["last_name", "first_name", "patronymic", "birth_date", "phone"]
-LABEL_SHORTCUTS = {ord(str(i + 1)): label for i, label in enumerate(LABEL_OPTIONS)}
 
 
 class ClickCollector:
@@ -23,12 +23,7 @@ class ClickCollector:
             self.points.append((x, y))
 
 
-def next_index(cells: list[CellConfig], label: str) -> int:
-    indices = [cell.index for cell in cells if cell.label == label]
-    return (max(indices) + 1) if indices else 0
-
-
-def draw_preview(image, cells, scale: int, active_label: str, collector_points, selected_idx: int | None):
+def draw_preview(image, cells, scale: int, selected_idx: int | None):
     preview = cv2.resize(
         image,
         (max(1, image.shape[1] * scale), max(1, image.shape[0] * scale)),
@@ -37,13 +32,12 @@ def draw_preview(image, cells, scale: int, active_label: str, collector_points, 
 
     for idx, cell in enumerate(cells):
         color = (0, 255, 255) if idx == selected_idx else (0, 255, 0)
-        thickness = 3 if idx == selected_idx else 2
         cv2.rectangle(
             preview,
             (cell.x * scale, cell.y * scale),
             ((cell.x + cell.w) * scale, (cell.y + cell.h) * scale),
             color,
-            thickness,
+            2,
         )
         cv2.putText(
             preview,
@@ -55,23 +49,61 @@ def draw_preview(image, cells, scale: int, active_label: str, collector_points, 
             1,
             cv2.LINE_AA,
         )
-
-    if len(collector_points) == 1:
-        px, py = collector_points[0]
-        cv2.circle(preview, (px, py), 4, (255, 255, 0), -1)
-
-    lines = [
-        f"scale={scale} active={active_label}",
-        "Mouse: click 2 points to add cell",
-        "1-5 set category | +/- zoom | tab next cell",
-        "[ ] change selected index | r reset points",
-        "u undo last | del delete selected | q save&quit",
-    ]
-    y = 24
-    for line in lines:
-        cv2.putText(preview, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        y += 22
     return preview
+
+
+def choose_category_dialog(current: str | None = None) -> str:
+    window = "Choose category"
+    canvas = np.zeros((220, 520, 3), dtype=np.uint8)
+    canvas[:] = (30, 30, 30)
+    cv2.putText(canvas, "Select category (press 1..5)", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    for i, label in enumerate(LABEL_OPTIONS, start=1):
+        color = (0, 255, 255) if label == current else (200, 200, 200)
+        cv2.putText(canvas, f"{i}. {label}", (30, 35 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+    cv2.putText(canvas, "Esc: cancel", (30, 205), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    while True:
+        cv2.imshow(window, canvas)
+        key = cv2.waitKey(0) & 0xFF
+        if key in (27, ord("q")):
+            cv2.destroyWindow(window)
+            return current or LABEL_OPTIONS[0]
+        if ord("1") <= key <= ord("5"):
+            chosen = LABEL_OPTIONS[key - ord("1")]
+            cv2.destroyWindow(window)
+            return chosen
+
+
+def choose_index_dialog(current: int | None = None) -> int:
+    window = "Choose index"
+    value = max(0, current or 0)
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    while True:
+        canvas = np.zeros((180, 520, 3), dtype=np.uint8)
+        canvas[:] = (30, 30, 30)
+        cv2.putText(canvas, "Choose index", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(canvas, f"Current: {value}", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        cv2.putText(canvas, "Left/Right or -/+ to change", (20, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
+        cv2.putText(canvas, "Enter: confirm, Esc: cancel", (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
+        cv2.imshow(window, canvas)
+
+        key = cv2.waitKey(0) & 0xFF
+        if key in (13, 10):
+            cv2.destroyWindow(window)
+            return value
+        if key == 27:
+            cv2.destroyWindow(window)
+            return current if current is not None else 0
+        if key in (81, ord("-")):  # left
+            value = max(0, value - 1)
+        elif key in (83, ord("+"), ord("=")):  # right
+            value += 1
+
+
+def edit_cell_dialog(cell: CellConfig) -> None:
+    cell.label = choose_category_dialog(cell.label)
+    cell.index = choose_index_dialog(cell.index)
 
 
 def main() -> None:
@@ -84,56 +116,37 @@ def main() -> None:
 
     aligned = load_image(args.image)
     scale = max(1, args.scale)
-    active_label = LABEL_OPTIONS[0]
     collector = ClickCollector()
     cells: list[CellConfig] = []
     selected_idx: int | None = None
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(WINDOW_NAME, collector.on_click)
+    print("Controls: draw with 2 clicks | tab next | enter edit selected | +/- zoom | del remove | u undo | q save")
 
     while True:
-        preview = draw_preview(aligned, cells, scale, active_label, collector.points, selected_idx)
+        preview = draw_preview(aligned, cells, scale, selected_idx)
         cv2.imshow(WINDOW_NAME, preview)
         key = cv2.waitKey(30) & 0xFF
 
-        if key in LABEL_SHORTCUTS:
-            chosen = LABEL_SHORTCUTS[key]
-            active_label = chosen
-            if selected_idx is not None and 0 <= selected_idx < len(cells):
-                cells[selected_idx].label = chosen
-                if cells[selected_idx].index < 0:
-                    cells[selected_idx].index = next_index(cells, chosen)
-        elif key in (ord("+"), ord("=")):
+        if key in (ord("+"), ord("=")):
             scale = min(12, scale + 1)
         elif key == ord("-"):
             scale = max(1, scale - 1)
         elif key == 9:  # TAB
             if cells:
-                if selected_idx is None:
-                    selected_idx = 0
-                else:
-                    selected_idx = (selected_idx + 1) % len(cells)
-        elif key == ord("["):
+                selected_idx = 0 if selected_idx is None else (selected_idx + 1) % len(cells)
+        elif key in (13, 10):
             if selected_idx is not None and 0 <= selected_idx < len(cells):
-                cells[selected_idx].index -= 1
-        elif key == ord("]"):
+                edit_cell_dialog(cells[selected_idx])
+        elif key == 127:
             if selected_idx is not None and 0 <= selected_idx < len(cells):
-                cells[selected_idx].index += 1
+                cells.pop(selected_idx)
+                selected_idx = None if not cells else min(selected_idx, len(cells) - 1)
         elif key == ord("u"):
             if cells:
                 cells.pop()
-                if selected_idx is not None and selected_idx >= len(cells):
-                    selected_idx = len(cells) - 1 if cells else None
-        elif key == ord("r"):
-            collector.reset()
-        elif key == 127:  # delete
-            if selected_idx is not None and 0 <= selected_idx < len(cells):
-                cells.pop(selected_idx)
-                if not cells:
-                    selected_idx = None
-                else:
-                    selected_idx = min(selected_idx, len(cells) - 1)
+                selected_idx = None if not cells else min((selected_idx or 0), len(cells) - 1)
         elif key == ord("q"):
             break
 
@@ -153,20 +166,15 @@ def main() -> None:
             if w <= 0 or h <= 0:
                 continue
 
-            cell = CellConfig(label=active_label, index=next_index(cells, active_label), x=x, y=y, w=w, h=h)
+            cell = CellConfig(label=LABEL_OPTIONS[0], index=0, x=x, y=y, w=w, h=h)
+            edit_cell_dialog(cell)
             cells.append(cell)
             selected_idx = len(cells) - 1
 
     cv2.destroyAllWindows()
 
     cells = sorted(cells, key=lambda c: (c.label, c.index, c.y, c.x))
-
-    config = SheetConfig(
-        version=1,
-        image_width=aligned.shape[1],
-        image_height=aligned.shape[0],
-        cells=cells,
-    )
+    config = SheetConfig(version=1, image_width=aligned.shape[1], image_height=aligned.shape[0], cells=cells)
     output_path = Path(args.output)
     config.save(output_path)
     print(f"Saved {len(cells)} cells to {output_path}")
