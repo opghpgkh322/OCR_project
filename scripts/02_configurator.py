@@ -23,6 +23,14 @@ class ClickCollector:
             self.points.append((x, y))
 
 
+def find_cell_at(cells: list[CellConfig], x: int, y: int) -> int | None:
+    for idx in range(len(cells) - 1, -1, -1):
+        cell = cells[idx]
+        if cell.x <= x <= cell.x + cell.w and cell.y <= y <= cell.y + cell.h:
+            return idx
+    return None
+
+
 def draw_preview(image, cells, scale: int, selected_idx: int | None):
     preview = cv2.resize(
         image,
@@ -150,9 +158,24 @@ def main() -> None:
         elif key == ord("q"):
             break
 
+        while collector.points:
+            x_click, y_click = collector.points.pop(0)
+            x_img = x_click // scale
+            y_img = y_click // scale
+            hit_idx = find_cell_at(cells, x_img, y_img)
+
+            if hit_idx is not None:
+                selected_idx = hit_idx
+                edit_cell_dialog(cells[selected_idx])
+                collector.reset()
+                continue
+
+            collector.points.insert(0, (x_click, y_click))
+            break
+
         if len(collector.points) >= 2:
             (x1, y1), (x2, y2) = collector.points[:2]
-            collector.reset()
+            collector.points = collector.points[2:]
             x = min(x1, x2) // scale
             y = min(y1, y2) // scale
             w = abs(x2 - x1) // scale
