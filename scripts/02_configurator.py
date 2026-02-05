@@ -127,6 +127,11 @@ def main() -> None:
         default=str(repo_root / "sheet_config.json"),
         help="Path to save config JSON.",
     )
+    parser.add_argument(
+        "--input-config",
+        default="",
+        help="Optional existing config to load at startup (defaults to --output if file exists).",
+    )
     parser.add_argument("--scale", type=int, default=3, help="Initial zoom scale.")
     parser.add_argument("--inset", type=int, default=1, help="Inset in pixels to avoid touching borders.")
     args = parser.parse_args()
@@ -134,7 +139,17 @@ def main() -> None:
     aligned = load_image(args.image)
     scale = max(1, args.scale)
     collector = ClickCollector()
+    output_path = Path(args.output).resolve()
+    input_config_path = Path(args.input_config).resolve() if args.input_config else output_path
+
     cells: list[CellConfig] = []
+    if input_config_path.exists():
+        try:
+            loaded = SheetConfig.load(input_config_path)
+            cells = list(loaded.cells)
+            print(f"Loaded {len(cells)} cells from {input_config_path}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Failed to load existing config {input_config_path}: {exc}")
     selected_idx: int | None = None
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -207,7 +222,6 @@ def main() -> None:
 
     cells = sorted(cells, key=lambda c: (c.label, c.index, c.y, c.x))
     config = SheetConfig(version=1, image_width=aligned.shape[1], image_height=aligned.shape[0], cells=cells)
-    output_path = Path(args.output).resolve()
     config.save(output_path)
     print(f"Saved {len(cells)} cells to {output_path}")
 
