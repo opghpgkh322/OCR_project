@@ -1,10 +1,10 @@
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import cv2
 import numpy as np
-import json
 from tensorflow import keras
 
 from ocr_app.config import SheetConfig
@@ -28,31 +28,11 @@ def normalize_label(text: str) -> str | None:
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Review OCR predictions and save corrections.")
-    parser.add_argument(
-        "--scans",
-        default=str(repo_root / "scans"),
-        help="Folder with scanned forms.",
-    )
-    parser.add_argument(
-        "--config",
-        default=str(repo_root / "sheet_config.json"),
-        help="Path to config JSON.",
-    )
-    parser.add_argument(
-        "--model-dir",
-        default=str(repo_root / "scripts" / "model"),
-        help="Directory with trained model.",
-    )
-    parser.add_argument(
-        "--review-root",
-        default=str(repo_root / "dataset_review"),
-        help="Folder to store corrected samples.",
-    )
-    parser.add_argument(
-        "--log",
-        default=str(repo_root / "review_log.csv"),
-        help="CSV log for corrections.",
-    )
+    parser.add_argument("--scans", default=str(repo_root / "scans"), help="Folder with scanned forms.")
+    parser.add_argument("--config", default=str(repo_root / "sheet_config.json"), help="Path to config JSON.")
+    parser.add_argument("--model-dir", default=str(repo_root / "scripts" / "model"), help="Directory with trained model.")
+    parser.add_argument("--review-root", default=str(repo_root / "dataset_review"), help="Folder to store corrected samples.")
+    parser.add_argument("--log", default=str(repo_root / "review_log.csv"), help="CSV log for corrections.")
     args = parser.parse_args()
 
     config = SheetConfig.load(args.config)
@@ -69,10 +49,15 @@ def main() -> None:
     if not scan_paths:
         raise SystemExit("No scans found.")
 
+    print("Review mode: press Enter to accept prediction, type correction, or ':q' to stop early.")
+
+    stop_requested = False
     with open(args.log, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["scan", "field", "index", "prediction", "corrected", "image_path"])
         for scan_path in scan_paths:
+            if stop_requested:
+                break
             image = load_image(str(scan_path))
             aligned = align_image(image, (config.image_width, config.image_height))
             for cell in config.cells:
@@ -88,7 +73,9 @@ def main() -> None:
                     allowed = set(labels)
                 predicted = choose_allowed_label(probabilities, labels, allowed)
                 predicted_char = LABEL_TO_CHAR.get(predicted, predicted)
-                preview = (processed * 255.0).astype(np.uint8)
+
+                # Save review samples as black-ink-on-white to match dataset_external.
+                preview = (255.0 - (processed * 255.0)).astype(np.uint8)
                 output_dir = review_root / predicted
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_name = f"{scan_path.stem}_{cell.label}_{cell.index}.png"
@@ -97,16 +84,23 @@ def main() -> None:
 
                 prompt = f"{scan_path.name} [{cell.label} #{cell.index}] -> {predicted_char}: "
                 corrected_input = input(prompt).strip()
+                if corrected_input.lower() in {":q", "q!", "quit", "exit"}:
+                    stop_requested = True
+                    print("Early stop requested. Saving collected corrections...")
+                    break
+
                 corrected_label = normalize_label(corrected_input) if corrected_input else predicted
+                if corrected_label is None:
+                    corrected_label = predicted
+
                 corrected_dir = review_root / corrected_label
                 corrected_dir.mkdir(parents=True, exist_ok=True)
                 corrected_path = corrected_dir / output_name
                 if corrected_path != output_path:
                     output_path.replace(corrected_path)
                     output_path = corrected_path
-                writer.writerow(
-                    [scan_path.name, cell.label, cell.index, predicted, corrected_label, str(output_path)]
-                )
+
+                writer.writerow([scan_path.name, cell.label, cell.index, predicted, corrected_label, str(output_path)])
 
     print(f"Review data saved to {review_root}")
 
