@@ -1,5 +1,4 @@
 import argparse
-from collections import defaultdict
 from pathlib import Path
 
 import cv2
@@ -19,70 +18,60 @@ class ClickCollector:
     def reset(self) -> None:
         self.points = []
 
-    def pop_last(self) -> None:
-        if self.points:
-            self.points.pop()
-
     def on_click(self, event, x, y, _flags, _params):
         if event == cv2.EVENT_LBUTTONDOWN:
             self.points.append((x, y))
 
 
-def draw_preview(image, cells, scale: int, active_label: str, cursor_points: list[tuple[int, int]]):
+def next_index(cells: list[CellConfig], label: str) -> int:
+    indices = [cell.index for cell in cells if cell.label == label]
+    return (max(indices) + 1) if indices else 0
+
+
+def draw_preview(image, cells, scale: int, active_label: str, collector_points, selected_idx: int | None):
     preview = cv2.resize(
         image,
         (max(1, image.shape[1] * scale), max(1, image.shape[0] * scale)),
         interpolation=cv2.INTER_NEAREST,
     )
-    for cell in cells:
+
+    for idx, cell in enumerate(cells):
+        color = (0, 255, 255) if idx == selected_idx else (0, 255, 0)
+        thickness = 3 if idx == selected_idx else 2
         cv2.rectangle(
             preview,
             (cell.x * scale, cell.y * scale),
             ((cell.x + cell.w) * scale, (cell.y + cell.h) * scale),
-            (0, 255, 0),
-            2,
+            color,
+            thickness,
         )
         cv2.putText(
             preview,
-            f"{cell.label}:{cell.index}",
+            f"{idx}:{cell.label}:{cell.index}",
             (cell.x * scale, max(14, (cell.y - 4) * scale)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
-            (0, 255, 0),
+            color,
             1,
             cv2.LINE_AA,
         )
 
-    if len(cursor_points) == 1:
-        px, py = cursor_points[0]
+    if len(collector_points) == 1:
+        px, py = collector_points[0]
         cv2.circle(preview, (px, py), 4, (255, 255, 0), -1)
 
-    cv2.putText(
-        preview,
+    lines = [
         f"scale={scale} active={active_label}",
-        (10, 24),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        (0, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        preview,
-        "1-5:label  +/-:zoom  u:undo  c:clear points  n:rename idx  q:save&quit",
-        (10, 48),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-        cv2.LINE_AA,
-    )
+        "Mouse: click 2 points to add cell",
+        "1-5 set category | +/- zoom | tab next cell",
+        "[ ] change selected index | r reset points",
+        "u undo last | del delete selected | q save&quit",
+    ]
+    y = 24
+    for line in lines:
+        cv2.putText(preview, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        y += 22
     return preview
-
-
-def next_index(cells: list[CellConfig], label: str) -> int:
-    indices = [cell.index for cell in cells if cell.label == label]
-    return (max(indices) + 1) if indices else 0
 
 
 def main() -> None:
@@ -96,56 +85,55 @@ def main() -> None:
     aligned = load_image(args.image)
     scale = max(1, args.scale)
     active_label = LABEL_OPTIONS[0]
-
     collector = ClickCollector()
     cells: list[CellConfig] = []
+    selected_idx: int | None = None
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(WINDOW_NAME, collector.on_click)
 
-    print("Quick config mode")
-    print("- Click top-left and bottom-right to add a cell.")
-    print("- Labels: 1:last_name 2:first_name 3:patronymic 4:birth_date 5:phone")
-    print("- Press +/- to zoom, u to undo last cell, n for manual index correction, q to finish.")
-
     while True:
-        preview = draw_preview(aligned, cells, scale, active_label, collector.points)
+        preview = draw_preview(aligned, cells, scale, active_label, collector.points, selected_idx)
         cv2.imshow(WINDOW_NAME, preview)
         key = cv2.waitKey(30) & 0xFF
 
         if key in LABEL_SHORTCUTS:
-            active_label = LABEL_SHORTCUTS[key]
-            print(f"Active label -> {active_label}")
+            chosen = LABEL_SHORTCUTS[key]
+            active_label = chosen
+            if selected_idx is not None and 0 <= selected_idx < len(cells):
+                cells[selected_idx].label = chosen
+                if cells[selected_idx].index < 0:
+                    cells[selected_idx].index = next_index(cells, chosen)
         elif key in (ord("+"), ord("=")):
             scale = min(12, scale + 1)
-            print(f"Zoom scale -> {scale}")
         elif key == ord("-"):
             scale = max(1, scale - 1)
-            print(f"Zoom scale -> {scale}")
+        elif key == 9:  # TAB
+            if cells:
+                if selected_idx is None:
+                    selected_idx = 0
+                else:
+                    selected_idx = (selected_idx + 1) % len(cells)
+        elif key == ord("["):
+            if selected_idx is not None and 0 <= selected_idx < len(cells):
+                cells[selected_idx].index -= 1
+        elif key == ord("]"):
+            if selected_idx is not None and 0 <= selected_idx < len(cells):
+                cells[selected_idx].index += 1
         elif key == ord("u"):
             if cells:
-                removed = cells.pop()
-                print(f"Removed: {removed.label}:{removed.index}")
-        elif key == ord("c"):
+                cells.pop()
+                if selected_idx is not None and selected_idx >= len(cells):
+                    selected_idx = len(cells) - 1 if cells else None
+        elif key == ord("r"):
             collector.reset()
-        elif key == ord("n"):
-            if not cells:
-                continue
-            target = input("Edit index for label (blank to skip): ").strip()
-            if target:
-                by_label = [c for c in cells if c.label == target]
-                if not by_label:
-                    print("No cells with this label.")
+        elif key == 127:  # delete
+            if selected_idx is not None and 0 <= selected_idx < len(cells):
+                cells.pop(selected_idx)
+                if not cells:
+                    selected_idx = None
                 else:
-                    for idx, cell in enumerate(sorted(by_label, key=lambda x: x.index)):
-                        print(f"{idx}: current index {cell.index} at ({cell.x},{cell.y})")
-                    try:
-                        row = int(input("Select row number: ").strip())
-                        new_idx = int(input("New index: ").strip())
-                        selected = sorted(by_label, key=lambda x: x.index)[row]
-                        selected.index = new_idx
-                    except (ValueError, IndexError):
-                        print("Invalid selection.")
+                    selected_idx = min(selected_idx, len(cells) - 1)
         elif key == ord("q"):
             break
 
@@ -163,39 +151,25 @@ def main() -> None:
             w -= inset * 2
             h -= inset * 2
             if w <= 0 or h <= 0:
-                print("Skipped invalid rectangle.")
                 continue
 
-            auto_idx = next_index(cells, active_label)
-            manual = input(f"Cell -> {active_label}[{auto_idx}] Enter custom index or Enter: ").strip()
-            if manual:
-                try:
-                    auto_idx = int(manual)
-                except ValueError:
-                    print("Invalid index. Keeping auto index.")
-            cells.append(CellConfig(label=active_label, index=auto_idx, x=x, y=y, w=w, h=h))
+            cell = CellConfig(label=active_label, index=next_index(cells, active_label), x=x, y=y, w=w, h=h)
+            cells.append(cell)
+            selected_idx = len(cells) - 1
 
     cv2.destroyAllWindows()
 
-    # Normalize indexes per label for stable output ordering.
-    grouped: dict[str, list[CellConfig]] = defaultdict(list)
-    for cell in cells:
-        grouped[cell.label].append(cell)
-    normalized: list[CellConfig] = []
-    for label, label_cells in grouped.items():
-        for idx, cell in enumerate(sorted(label_cells, key=lambda c: (c.index, c.y, c.x))):
-            cell.index = idx
-            normalized.append(cell)
+    cells = sorted(cells, key=lambda c: (c.label, c.index, c.y, c.x))
 
     config = SheetConfig(
         version=1,
         image_width=aligned.shape[1],
         image_height=aligned.shape[0],
-        cells=normalized,
+        cells=cells,
     )
     output_path = Path(args.output)
     config.save(output_path)
-    print(f"Saved {len(normalized)} cells to {output_path}")
+    print(f"Saved {len(cells)} cells to {output_path}")
 
 
 if __name__ == "__main__":
