@@ -67,36 +67,52 @@ def main() -> None:
         )
         writer.writeheader()
         for scan_path in scan_paths:
+            print(f"Processing {scan_path.name}...")  # Добавим лог
             image = load_image(str(scan_path))
-            aligned = align_image(image, (config.image_width, config.image_height))
+            try:
+                aligned = align_image(image, (config.image_width, config.image_height))
+            except Exception as e:
+                print(f"Skipping {scan_path.name}: alignment failed ({e})")
+                continue
 
             row = {
                 "filename": scan_path.name,
-                "last_name": "",
-                "first_name": "",
-                "patronymic": "",
-                "birth_date": "",
-                "phone": "",
+                "last_name": "", "first_name": "", "patronymic": "",
+                "birth_date": "", "phone": "",
             }
 
             for label, cells in grouped.items():
                 crops = []
+                padding = 4  # <--- Захватываем больше контекста
+
                 for cell in cells:
-                    crop = aligned[cell.y : cell.y + cell.h, cell.x : cell.x + cell.w]
+                    # Безопасный кроп с паддингом
+                    y1 = max(0, cell.y - padding)
+                    y2 = min(aligned.shape[0], cell.y + cell.h + padding)
+                    x1 = max(0, cell.x - padding)
+                    x2 = min(aligned.shape[1], cell.x + cell.w + padding)
+
+                    crop = aligned[y1:y2, x1:x2]
                     processed = preprocess_cell(crop, size)
                     crops.append(processed)
+
                 batch = np.expand_dims(np.array(crops), axis=-1)
                 probabilities = model.predict(batch, verbose=0)
+
                 if label in {"last_name", "first_name", "patronymic"}:
                     allowed = LETTER_LABELS
                 elif label in {"birth_date", "phone"}:
                     allowed = DIGIT_LABELS
                 else:
                     allowed = set(labels)
-                predictions = [
-                    choose_allowed_label(probabilities[idx], labels, allowed) for idx in range(len(crops))
-                ]
-                row[label] = "".join(LABEL_TO_CHAR.get(prediction, prediction) for prediction in predictions)
+
+                predictions = []
+                for idx in range(len(crops)):
+                    pred_label = choose_allowed_label(probabilities[idx], labels, allowed)
+                    char = LABEL_TO_CHAR.get(pred_label, "")
+                    predictions.append(char)
+
+                row[label] = "".join(predictions)
 
             writer.writerow(row)
 
