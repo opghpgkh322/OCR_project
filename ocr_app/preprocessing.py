@@ -94,10 +94,19 @@ def detect_markers(image: np.ndarray, min_area: int = 500, min_fill: float = 0.7
     return _order_points(corner_markers)
 
 
-def align_image(image: np.ndarray, output_size: tuple[int, int] | None = None) -> np.ndarray:
+def align_image(image: np.ndarray, output_size: tuple[int, int] | None = None, top_padding: int = 15) -> np.ndarray:
+    """
+    Выравнивает изображение формы по маркерам с дополнительным отступом сверху.
+
+    Args:
+        image: Исходное изображение
+        output_size: Желаемый размер (ширина, высота). Если None, вычисляется автоматически
+        top_padding: Дополнительные пиксели сверху для защиты от обрезания (по умолчанию 15)
+    """
     markers = detect_markers(image)
+
     if output_size is None:
-        # Если размер не задан, пытаемся сохранить пропорции по найденным маркерам
+        # Если размер не задан, вычисляем по маркерам
         tl, tr, br, bl = markers
         width_top = np.linalg.norm(tr - tl)
         width_bottom = np.linalg.norm(br - bl)
@@ -105,11 +114,18 @@ def align_image(image: np.ndarray, output_size: tuple[int, int] | None = None) -
         height_right = np.linalg.norm(br - tr)
         width = int(max(width_top, width_bottom))
         height = int(max(height_left, height_right))
-        output_size = (width, height)
+        output_size = (width, height + top_padding)  # Добавляем отступ к высоте
+    else:
+        # Если размер задан явно, тоже добавляем отступ
+        output_size = (output_size[0], output_size[1] + top_padding)
 
+    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Целевые точки начинаются НЕ с (0,0), а с (0, top_padding)
+    # Это сдвигает всё содержимое вниз, оставляя пустое место сверху
     dst = np.array([
-        [0, 0], [output_size[0] - 1, 0],
-        [output_size[0] - 1, output_size[1] - 1], [0, output_size[1] - 1],
+        [0, top_padding],  # Верхний левый
+        [output_size[0] - 1, top_padding],  # Верхний правый
+        [output_size[0] - 1, output_size[1] - 1],  # Нижний правый
+        [0, output_size[1] - 1],  # Нижний левый
     ], dtype="float32")
 
     matrix = cv2.getPerspectiveTransform(markers, dst)
