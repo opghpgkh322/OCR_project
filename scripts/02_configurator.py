@@ -159,47 +159,76 @@ def main() -> None:
     while True:
         preview = draw_preview(aligned, cells, scale, selected_idx)
         cv2.imshow(WINDOW_NAME, preview)
-        key = cv2.waitKey(30) & 0xFF
+        key = cv2.waitKey(30)  # Убираем & 0xFF, чтобы видеть полный код
 
-        if key in (ord("+"), ord("=")):
+        # Для отладки: раскомментируйте эту строку, чтобы видеть коды клавиш
+        # if key != -1:
+        #     print(f"Key pressed: {key}")
+
+        # Нормализуем код клавиши (убираем лишние биты, но сохраняем нужные)
+        key_code = key & 0xFFFF  # Берем младшие 16 бит
+        key_ascii = key & 0xFF  # ASCII код (для букв/цифр)
+
+        # ZOOM: +/-
+        if key_ascii in (ord("+"), ord("=")):
             scale = min(12, scale + 1)
-        elif key == ord("-"):
+        elif key_ascii == ord("-"):
             scale = max(1, scale - 1)
-        elif key == 9:  # TAB
+
+        # TAB: следующая ячейка
+        elif key_ascii == 9:
             if cells:
                 selected_idx = 0 if selected_idx is None else (selected_idx + 1) % len(cells)
-        elif key in (13, 10):
+
+        # ENTER: редактировать выбранную
+        elif key_ascii in (13, 10):
             if selected_idx is not None and 0 <= selected_idx < len(cells):
                 edit_cell_dialog(cells[selected_idx])
-        elif key == 127:
+
+        # DELETE: удалить выбранную ячейку
+        # Windows Delete = 3014656 (0x2E0000), Unix Delete = 127
+        # Проверяем и полный код, и ASCII, и клавишу 'd' как запасной вариант
+        elif key_code == 0x2E0000 or key_ascii == 127 or key_ascii == ord("d"):
             if selected_idx is not None and 0 <= selected_idx < len(cells):
+                removed_cell = cells[selected_idx]
                 cells.pop(selected_idx)
+                print(f"✓ Удалена ячейка #{selected_idx}: {removed_cell.label}[{removed_cell.index}]")
                 selected_idx = None if not cells else min(selected_idx, len(cells) - 1)
-        elif key == ord("u"):
+
+        # U: UNDO (удалить последнюю добавленную)
+        elif key_ascii == ord("u"):
             if cells:
-                cells.pop()
+                removed = cells.pop()
+                print(f"✓ Отменено создание: {removed.label}[{removed.index}]")
                 selected_idx = None if not cells else min((selected_idx or 0), len(cells) - 1)
-        elif key == ord("q"):
+
+        # Q: выход и сохранение
+        elif key_ascii == ord("q"):
             break
 
+        # Обработка кликов мыши (создание/выбор ячеек)
         while collector.points:
             x_click, y_click = collector.points.pop(0)
             x_img = x_click // scale
             y_img = y_click // scale
-            hit_idx = find_cell_at(cells, x_img, y_img)
 
+            # Проверяем, кликнули ли по существующей ячейке
+            hit_idx = find_cell_at(cells, x_img, y_img)
             if hit_idx is not None:
                 selected_idx = hit_idx
                 edit_cell_dialog(cells[selected_idx])
                 collector.reset()
                 continue
 
+            # Если не попали в ячейку, начинаем рисовать новую
             collector.points.insert(0, (x_click, y_click))
             break
 
+        # Если накопилось 2 клика - создаем новую ячейку
         if len(collector.points) >= 2:
             (x1, y1), (x2, y2) = collector.points[:2]
             collector.points = collector.points[2:]
+
             x = min(x1, x2) // scale
             y = min(y1, y2) // scale
             w = abs(x2 - x1) // scale
@@ -210,6 +239,7 @@ def main() -> None:
             y += inset
             w -= inset * 2
             h -= inset * 2
+
             if w <= 0 or h <= 0:
                 continue
 
@@ -217,6 +247,7 @@ def main() -> None:
             edit_cell_dialog(cell)
             cells.append(cell)
             selected_idx = len(cells) - 1
+            print(f"✓ Добавлена ячейка: {cell.label}[{cell.index}]")
 
     cv2.destroyAllWindows()
 
