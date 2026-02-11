@@ -164,10 +164,18 @@ def preprocess_cell(image: np.ndarray, size: tuple[int, int]) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray = image
+
     thresh = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, 15, 4
     )
+
+    # НОВОЕ: Проверка полярности
+    # Если большая часть пикселей белая (>127), инвертируем
+    mean_intensity = np.mean(thresh)
+    if mean_intensity > 127:
+        thresh = cv2.bitwise_not(thresh)
+
     cleaned = clear_border(thresh, border_size=3)
     centered = center_content(cleaned, size)
     return centered.astype("float32") / 255.0

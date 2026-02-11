@@ -41,25 +41,18 @@ def scan_datasets(roots: list[Path], allowed_ext: tuple[str, ...] = (".png", ".j
 
 # --- НОВАЯ ФУНКЦИЯ: АДАПТАЦИЯ СТИЛЯ ---
 def augment_style(image: np.ndarray) -> np.ndarray:
-    """Случайно меняет толщину линий, чтобы уравнять Paint и ручку."""
-
-    # Шанс 50% вообще ничего не делать
     if random.random() > 0.5:
         return image
 
     kernel = np.ones((2, 2), np.uint8)
 
-    # Шанс 25%: сделать линии тоньше (Erosion) - превращает Paint в ручку
+    # Для ЧЕРНОГО текста (значение 0) на БЕЛОМ фоне (255):
     if random.random() < 0.5:
-        # Для темного текста на светлом фоне эрозия "съедает" черное
-        # Но в OpenCV эрозия работает по белому.
-        # Если у нас черный текст (0) на белом (255), нам нужна DILATION, чтобы расширить белое (сузить черное)
-        return cv2.dilate(image, kernel, iterations=1)
-
-    # Шанс 25%: сделать линии толще (Dilation) - превращает ручку в Paint
-    else:
-        # EROSION сужает белое -> расширяет черное
+        # Erosion съедает черное = делает линии тоньше
         return cv2.erode(image, kernel, iterations=1)
+    else:
+        # Dilation расширяет черное = делает линии толще
+        return cv2.dilate(image, kernel, iterations=1)
 
 
 def load_images(
@@ -132,14 +125,69 @@ def kmeans_cluster(features: np.ndarray, k: int = 3, **kwargs) -> np.ndarray:
 
 def stratified_split(
         items: list[DatasetItem],
-        style_groups: np.ndarray,
+        style_groups: np.ndarray,  # Этот аргумент оставляем для совместимости, но не используем
         train_ratio: float,
         seed: int,
 ) -> tuple[list[DatasetItem], list[DatasetItem]]:
-    # Простое случайное разбиение без учета стилей
-    rng = random.Random(seed)
-    items_copy = list(items)
-    rng.shuffle(items_copy)
+    """
+    Честное стратифицированное разбиение.
+    Гарантирует, что train_ratio соблюдается ДЛЯ КАЖДОЙ БУКВЫ (папки) отдельно.
+    """
+    from collections import defaultdict
 
-    split_idx = int(len(items_copy) * train_ratio)
-    return items_copy[:split_idx], items_copy[split_idx:]
+    rng = random.Random(seed)
+
+    # 1. Группируем файлы по меткам (буквам)
+    groups = defaultdict(list)
+    for item in items:
+        groups[item.label].append(item)
+
+    train_items = []
+    test_items = []
+
+    # 2. Проходим по каждой букве отдельно
+    for label, group_items in groups.items():
+        # Перемешиваем внутри одной буквы
+        rng.shuffle(group_items)
+
+        # Вычисляем точку разреза для этой буквы
+        # min(..., len-1) гарантирует, что хотя бы 1 файл попадет в тест (если файлов > 1)
+        split_idx = int(len(group_items) * train_ratio)
+
+        # Если примеров очень мало (например, 1), кидаем его в train, чтобы модель хоть что-то знала
+        if split_idx == 0 and len(group_items) > 0:
+            split_idx = 1
+
+        train_part = group_items[:split_idx]
+        test_part = group_items[split_idx:]
+
+        train_items.extend(train_part)
+        test_items.extend(test_part)
+
+    # 3. Финальное перемешивание общих списков, чтобы буквы шли не по порядку
+    rng.shuffle(train_items)
+    rng.shuffle(test_items)
+
+    print(f"Stratified split: {len(train_items)} train, {len(test_items)} test")
+    return train_items, test_items
+
+
+def advanced_augment(image: np.ndarray) -> np.ndarray:
+    # Случайный небольшой поворот (±5 градусов)
+    if random.random() < 0.3:
+        angle = random.uniform(-5, 5)
+        h, w = image.shape[:2]
+        matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+        image = cv2.warpAffine(image, matrix, (w, h),
+                               borderMode=cv2.BORDER_REPLICATE)
+
+    # Случайное добавление шума
+    if random.random() < 0.2:
+        noise = np.random.normal(0, 5, image.shape).astype(np.uint8)
+        image = cv2.add(image, noise)
+
+    # Случайное размытие
+    if random.random() < 0.2:
+        image = cv2.GaussianBlur(image, (3, 3), 0)
+
+    return image
