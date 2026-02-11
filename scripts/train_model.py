@@ -16,7 +16,7 @@ def main() -> None:
 
     # Оптимальные параметры для i7-7700
     parser.add_argument("--image-size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=8)  # Должно хватить 20-25 эпох
+    parser.add_argument("--epochs", type=int, default=30)  # Должно хватить 20-25 эпох
     parser.add_argument("--batch-size", type=int, default=32)  # Маленький батч быстрее на CPU
     parser.add_argument("--train-ratio", type=float, default=0.9)
     parser.add_argument("--output-dir", default="model")

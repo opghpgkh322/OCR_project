@@ -1,7 +1,7 @@
 import argparse
 import csv
 from pathlib import Path
-
+import cv2
 import numpy as np
 from tensorflow import keras
 
@@ -20,31 +20,24 @@ def group_cells(cells):
     return grouped
 
 
+def is_empty_crop(image: np.ndarray, threshold: float = 0.01) -> bool:
+    """
+    Проверяет, пустой ли кроп.
+    image: изображение 0..1, где чем выше значение, тем "белее" буква.
+    Если среднее значение очень низкое, значит там почти сплошная чернота (фон).
+    """
+    return np.mean(image) < threshold
 
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Run OCR on scans and export CSV.")
-    parser.add_argument(
-        "--scans",
-        default=str(repo_root / "scans"),
-        help="Folder with scanned forms.",
-    )
-    parser.add_argument(
-        "--config",
-        default=str(repo_root / "sheet_config.json"),
-        help="Path to config JSON.",
-    )
-    parser.add_argument(
-        "--model-dir",
-        default=str(repo_root / "scripts" / "model"),
-        help="Directory with trained model.",
-    )
-    parser.add_argument(
-        "--output",
-        default=str(repo_root / "output.csv"),
-        help="Output CSV file.",
-    )
+    parser.add_argument("--scans", default=str(repo_root / "scans"))
+    parser.add_argument("--config", default=str(repo_root / "sheet_config.json"))
+    parser.add_argument("--model-dir", default=str(repo_root / "scripts" / "model"))
+    parser.add_argument("--output", default=str(repo_root / "output.csv"))
+    # Добавляем параметр для паддинга, чтобы он совпадал с тем, что был при создании aligned_form
+    parser.add_argument("--padding", type=int, default=15, help="Top padding used in alignment")
     args = parser.parse_args()
 
     config = SheetConfig.load(args.config)
@@ -66,11 +59,24 @@ def main() -> None:
             fieldnames=["filename", "last_name", "first_name", "patronymic", "birth_date", "phone"],
         )
         writer.writeheader()
+
         for scan_path in scan_paths:
-            print(f"Processing {scan_path.name}...")  # Добавим лог
+            print(f"Processing {scan_path.name}...")
+            # Читаем сразу в цвете, align_image сам разберется, но preprocess_cell умеет работать и так
             image = load_image(str(scan_path))
+
             try:
-                aligned = align_image(image, (config.image_width, config.image_height))
+                # --- ИСПРАВЛЕНИЕ КООРДИНАТ ---
+                # Функция align_image сама добавляет args.padding к высоте.
+                # Но config.image_height УЖЕ включает этот паддинг (так как конфиг делался по aligned_form).
+                # Поэтому мы должны ВЫЧЕСТЬ его перед передачей, чтобы не получить двойной отступ.
+                target_height = config.image_height - args.padding
+
+                aligned = align_image(
+                    image,
+                    output_size=(config.image_width, target_height),
+                    top_padding=args.padding
+                )
             except Exception as e:
                 print(f"Skipping {scan_path.name}: alignment failed ({e})")
                 continue
@@ -81,27 +87,37 @@ def main() -> None:
                 "birth_date": "", "phone": "",
             }
 
-            for label, cells in grouped.items():
+            for label_name, cells in grouped.items():
                 crops = []
-                padding = 4  # <--- Захватываем больше контекста
+                # Уменьшаем паддинг при нарезке, чтобы не цеплять соседей
+                crop_padding = 2
 
                 for cell in cells:
-                    # Безопасный кроп с паддингом
-                    y1 = max(0, cell.y - padding)
-                    y2 = min(aligned.shape[0], cell.y + cell.h + padding)
-                    x1 = max(0, cell.x - padding)
-                    x2 = min(aligned.shape[1], cell.x + cell.w + padding)
+                    y1 = max(0, cell.y - crop_padding)
+                    y2 = min(aligned.shape[0], cell.y + cell.h + crop_padding)
+                    x1 = max(0, cell.x - crop_padding)
+                    x2 = min(aligned.shape[1], cell.x + cell.w + crop_padding)
 
                     crop = aligned[y1:y2, x1:x2]
+
+                    # Препроцессинг (он же инвертирует цвета, если вы применили мои прошлые правки)
                     processed = preprocess_cell(crop, size)
+
+                    # --- ФИЛЬТРАЦИЯ МУСОРА ---
+                    if is_empty_crop(processed, threshold=0.015):
+                        continue
+
                     crops.append(processed)
+
+                if not crops:
+                    continue
 
                 batch = np.expand_dims(np.array(crops), axis=-1)
                 probabilities = model.predict(batch, verbose=0)
 
-                if label in {"last_name", "first_name", "patronymic"}:
+                if label_name in {"last_name", "first_name", "patronymic"}:
                     allowed = LETTER_LABELS
-                elif label in {"birth_date", "phone"}:
+                elif label_name in {"birth_date", "phone"}:
                     allowed = DIGIT_LABELS
                 else:
                     allowed = set(labels)
@@ -109,10 +125,15 @@ def main() -> None:
                 predictions = []
                 for idx in range(len(crops)):
                     pred_label = choose_allowed_label(probabilities[idx], labels, allowed)
+
+                    # Пропускаем явный класс Empty
+                    if pred_label == "Empty":
+                        continue
+
                     char = LABEL_TO_CHAR.get(pred_label, "")
                     predictions.append(char)
 
-                row[label] = "".join(predictions)
+                row[label_name] = "".join(predictions)
 
             writer.writerow(row)
 
