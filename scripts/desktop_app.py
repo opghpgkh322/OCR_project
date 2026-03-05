@@ -14,6 +14,11 @@ COLOR_ACCENT_DARK = "#5DA83F"
 COLOR_TEXT = "#1A1A1A"
 COLOR_MUTED = "#5D6D5A"
 
+PASSWORD_TO_ROLE = {
+    "opghpgkh": "root",
+    "admin": "user",
+}
+
 
 def open_folder(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
@@ -23,6 +28,57 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["open", str(path)])
     else:
         subprocess.Popen(["xdg-open", str(path)])
+
+
+class LoginDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Tk, current_role: str | None = None) -> None:
+        super().__init__(parent)
+        self.title("Авторизация")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self.configure(bg=BG_PANEL)
+
+        self.role: str | None = None
+
+        frame = ttk.Frame(self, padding=14, style="Card.TFrame")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        caption = "Введите пароль для входа"
+        if current_role:
+            caption = f"Текущий пользователь: {current_role}. Введите пароль для смены пользователя"
+
+        ttk.Label(frame, text=caption, style="Body.TLabel", wraplength=360, justify=tk.LEFT).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
+        )
+        ttk.Label(frame, text="Пароль:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8))
+
+        self.password_entry = ttk.Entry(frame, show="*", width=26)
+        self.password_entry.grid(row=1, column=1, sticky="ew")
+        self.password_entry.focus_set()
+
+        btn_row = ttk.Frame(frame, style="Card.TFrame")
+        btn_row.grid(row=2, column=0, columnspan=2, sticky="e", pady=(12, 0))
+
+        ttk.Button(btn_row, text="Отмена", style="Action.TButton", command=self._cancel).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="Войти", style="Primary.TButton", command=self._submit).pack(side=tk.RIGHT)
+
+        self.password_entry.bind("<Return>", lambda _e: self._submit())
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _submit(self) -> None:
+        password = self.password_entry.get().strip()
+        role = PASSWORD_TO_ROLE.get(password)
+        if role is None:
+            messagebox.showerror("Ошибка", "Неверный пароль")
+            self.password_entry.delete(0, tk.END)
+            return
+        self.role = role
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.role = None
+        self.destroy()
 
 
 class OCRDesktopApp:
@@ -39,9 +95,20 @@ class OCRDesktopApp:
         self.epochs_var = tk.StringVar(value="12")
         self.fine_tune_var = tk.BooleanVar(value=True)
         self.correction_var = tk.BooleanVar(value=True)
+        self.current_role = "user"
+        self.notebook: ttk.Notebook | None = None
+        self.quality_tab_index = 0
+        self.train_tab_index = 1
+        self.crm_tab_index = 2
+        self.role_label: ttk.Label | None = None
+        self.logo_photo: tk.PhotoImage | None = None
 
         self._configure_styles()
         self._build_ui()
+
+        if not self.login(initial=True):
+            self.root.destroy()
+            return
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -55,8 +122,9 @@ class OCRDesktopApp:
         style.configure("Hint.TLabel", background=BG_PANEL, foreground=COLOR_MUTED, font=("Segoe UI", 9))
         style.configure("HeaderTitle.TLabel", background=BG_MAIN, foreground=COLOR_TEXT, font=("Segoe UI", 24, "bold"))
         style.configure("HeaderSub.TLabel", background=BG_MAIN, foreground=COLOR_MUTED, font=("Segoe UI", 11))
+        style.configure("HeaderRole.TLabel", background=BG_MAIN, foreground=COLOR_TEXT, font=("Segoe UI", 10, "bold"))
 
-        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(18, 14), foreground="#10250E", background=COLOR_ACCENT)
+        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(18, 10), foreground="#10250E", background=COLOR_ACCENT)
         style.map("Primary.TButton", background=[("active", COLOR_ACCENT_DARK), ("pressed", COLOR_ACCENT_DARK)])
 
         style.configure("Action.TButton", font=("Segoe UI", 10), padding=(10, 8), background="#E8F8DF")
@@ -79,15 +147,23 @@ class OCRDesktopApp:
     def _build_header(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent, style="Root.TFrame")
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        header.grid_columnconfigure(1, weight=1)
+        header.grid_columnconfigure(2, weight=1)
 
-        logo_canvas = tk.Canvas(header, width=68, height=68, bg=BG_MAIN, highlightthickness=0)
-        logo_canvas.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
-        logo_canvas.create_line(22, 16, 22, 56, fill=COLOR_TEXT, width=4)
-        logo_canvas.create_line(42, 24, 42, 56, fill=COLOR_TEXT, width=3)
-        logo_canvas.create_polygon(22, 12, 8, 30, 36, 30, fill=COLOR_TEXT, outline=COLOR_TEXT)
-        logo_canvas.create_polygon(22, 22, 10, 38, 34, 38, fill=COLOR_TEXT, outline=COLOR_TEXT)
-        logo_canvas.create_polygon(42, 20, 34, 32, 50, 32, fill=COLOR_TEXT, outline=COLOR_TEXT)
+        logo_label = ttk.Label(header, style="Root.TFrame")
+        logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
+
+        logo_path = self.repo_root / "assets" / "sequoia_logo.png"
+        if logo_path.exists():
+            self.logo_photo = tk.PhotoImage(file=str(logo_path))
+            logo_label.configure(image=self.logo_photo)
+        else:
+            fallback = tk.Canvas(header, width=68, height=68, bg=BG_MAIN, highlightthickness=0)
+            fallback.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
+            fallback.create_line(22, 16, 22, 56, fill=COLOR_TEXT, width=4)
+            fallback.create_line(42, 24, 42, 56, fill=COLOR_TEXT, width=3)
+            fallback.create_polygon(22, 12, 8, 30, 36, 30, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_polygon(22, 22, 10, 38, 34, 38, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_polygon(42, 20, 34, 32, 50, 32, fill=COLOR_TEXT, outline=COLOR_TEXT)
 
         ttk.Label(header, text="SEQUOIA PARK", style="HeaderTitle.TLabel").grid(row=0, column=1, sticky="w")
         ttk.Label(
@@ -95,6 +171,12 @@ class OCRDesktopApp:
             text="OCR для рукописных бланков • Бело-салатовая рабочая панель кассира",
             style="HeaderSub.TLabel",
         ).grid(row=1, column=1, sticky="w")
+
+        role_panel = ttk.Frame(header, style="Root.TFrame")
+        role_panel.grid(row=0, column=2, rowspan=2, sticky="e")
+        self.role_label = ttk.Label(role_panel, text="Роль: user", style="HeaderRole.TLabel")
+        self.role_label.pack(anchor="e")
+        ttk.Button(role_panel, text="Сменить пользователя", style="Action.TButton", command=self.switch_user).pack(anchor="e", pady=(8, 0))
 
     def _build_left_panel(self, parent: ttk.Frame) -> None:
         left = ttk.Frame(parent, style="Card.TFrame", padding=14)
@@ -153,16 +235,16 @@ class OCRDesktopApp:
         notebook_card = ttk.Frame(panel, style="Card.TFrame", padding=10)
         notebook_card.grid(row=0, column=0, sticky="ew")
 
-        notebook = ttk.Notebook(notebook_card, style="Notebook.TNotebook")
-        notebook.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(notebook_card, style="Notebook.TNotebook")
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        quality_tab = ttk.Frame(notebook, style="Card.TFrame", padding=12)
-        train_tab = ttk.Frame(notebook, style="Card.TFrame", padding=12)
-        crm_tab = ttk.Frame(notebook, style="Card.TFrame", padding=12)
+        quality_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
+        train_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
+        crm_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
 
-        notebook.add(quality_tab, text="Качество распознавания")
-        notebook.add(train_tab, text="Дообучение модели")
-        notebook.add(crm_tab, text="CRM и выгрузка")
+        self.notebook.add(quality_tab, text="Качество распознавания")
+        self.notebook.add(train_tab, text="Дообучение модели")
+        self.notebook.add(crm_tab, text="CRM и выгрузка")
 
         self._build_quality_tab(quality_tab)
         self._build_train_tab(train_tab)
@@ -236,6 +318,45 @@ class OCRDesktopApp:
         ttk.Button(actions, text="Открыть crm/exports", style="Action.TButton", command=lambda: open_folder(self.repo_root / "crm" / "exports")).grid(row=0, column=1, padx=6, pady=3)
         ttk.Button(actions, text="Открыть реестр CRM", style="Action.TButton", command=self.open_crm_registry).grid(row=0, column=2, padx=6, pady=3)
 
+    def login(self, initial: bool = False) -> bool:
+        dialog = LoginDialog(self.root, None if initial else self.current_role)
+        self.root.wait_window(dialog)
+        if dialog.role is None:
+            if initial:
+                return False
+            return False
+
+        self.current_role = dialog.role
+        self.apply_role_permissions()
+        self.log(f"🔐 Выполнен вход: {self.current_role}")
+        return True
+
+    def switch_user(self) -> None:
+        if self.login(initial=False):
+            return
+        self.log("ℹ️ Смена пользователя отменена")
+
+    def apply_role_permissions(self) -> None:
+        if self.role_label is not None:
+            self.role_label.configure(text=f"Роль: {self.current_role}")
+
+        if self.notebook is None:
+            return
+
+        is_root = self.current_role == "root"
+        self.notebook.tab(self.quality_tab_index, state="normal" if is_root else "disabled")
+        self.notebook.tab(self.train_tab_index, state="normal" if is_root else "disabled")
+        self.notebook.tab(self.crm_tab_index, state="normal")
+
+        if not is_root:
+            self.notebook.select(self.crm_tab_index)
+
+    def _require_root(self) -> bool:
+        if self.current_role == "root":
+            return True
+        messagebox.showwarning("Недостаточно прав", "Для этого действия нужен root-пароль")
+        return False
+
     def log(self, text: str) -> None:
         self.log_text.insert(tk.END, text + "\n")
         self.log_text.see(tk.END)
@@ -271,18 +392,27 @@ class OCRDesktopApp:
         self.run_command(command, "OCR новых сканов")
 
     def run_configurator(self) -> None:
+        if not self._require_root():
+            return
         command = [self.python, str(self.repo_root / "scripts" / "02_configurator.py")]
         self.run_command(command, "Редактор координат")
 
     def run_review(self) -> None:
+        if not self._require_root():
+            return
         command = [self.python, str(self.repo_root / "scripts" / "interactive_trainer.py")]
         self.run_command(command, "Коррекция распознавания")
 
     def run_invert_review(self) -> None:
+        if not self._require_root():
+            return
         command = [self.python, str(self.repo_root / "invert_dataset_review.py")]
         self.run_command(command, "Invert dataset_review")
 
     def run_training(self) -> None:
+        if not self._require_root():
+            return
+
         try:
             epochs = int(self.epochs_var.get())
             if epochs <= 0:
@@ -338,7 +468,7 @@ def main() -> None:
 
     root = tk.Tk()
     app = OCRDesktopApp(root=root, repo_root=Path(args.repo_root))
-    app.log("Приложение запущено. Начните со стартовой кнопки OCR слева.")
+    app.log("Приложение запущено. Войдите под root или user.")
     root.mainloop()
 
 
