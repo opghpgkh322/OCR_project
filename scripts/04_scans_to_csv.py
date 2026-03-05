@@ -3,6 +3,7 @@ import csv
 import json
 import difflib
 from pathlib import Path
+from collections import Counter
 import cv2
 import numpy as np
 from tensorflow import keras
@@ -12,94 +13,166 @@ from ocr_app.labels import DIGIT_LABELS, LABEL_TO_CHAR, LETTER_LABELS, choose_al
 from ocr_app.model import load_labels
 from ocr_app.preprocessing import align_image, load_image, preprocess_cell
 
-# --- КОНФИГУРАЦИЯ ---
-CORRECTION_THRESHOLD = 0.75  # Чуть снизим порог, так как фильтр по полу убирает много ложных вариантов
-
 
 class GenderedDict:
-    """Хранит словари, разделенные по полу."""
+    """
+    Хранит словари частот, разделенные по полу.
+    Вместо set() используем Counter() для подсчета популярности.
+    """
 
     def __init__(self):
-        self.all = set()  # Все слова (для первого поиска)
-        self.male = set()  # Только мужские
-        self.female = set()  # Только женские
-        self.map = {}  # Слово -> Пол ('m', 'f', или None)
+        self.all = Counter()  # Все слова: Word -> Count
+        self.male = Counter()  # Мужские
+        self.female = Counter()  # Женские
+        self.map = {}  # Слово -> Пол
 
     def add(self, word: str, gender: str = None):
         if not word: return
         w = word.strip().upper()
-        self.all.add(w)
+        if len(w) < 2: return
 
-        # Запоминаем пол. Если слово уже есть, но с другим полом -> ставим None (унисекс)
+        # Увеличиваем счетчик популярности
+        self.all[w] += 1
+
+        # Логика определения пола
         if w not in self.map:
             self.map[w] = gender
-        elif self.map[w] != gender:
-            self.map[w] = None  # Конфликт полов (например, САША м/ж)
+        elif self.map[w] is not None and self.map[w] != gender:
+            self.map[w] = None
 
         if gender == 'm':
-            self.male.add(w)
+            self.male[w] += 1
         elif gender == 'f':
-            self.female.add(w)
+            self.female[w] += 1
+
+
+def load_kaggle_dataset(path: Path, names_db: GenderedDict, surnames_db: GenderedDict, midnames_db: GenderedDict):
+    if not path.exists():
+        print(f"⚠️ Kaggle датасет не найден: {path}")
+        return
+
+    print(f"⏳ Чтение базы и подсчет частот: {path.name}...")
+    count = 0
+    try:
+        try:
+            f = open(path, "r", encoding="utf-8")
+        except UnicodeDecodeError:
+            f = open(path, "r", encoding="cp1251")
+
+        with f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) < 4: continue
+                fam, im, otch, g_raw = row[0], row[1], row[2], row[3]
+
+                g_raw = g_raw.strip().upper()
+                gender = None
+                if g_raw in ('M', 'М'):
+                    gender = 'm'
+                elif g_raw in ('F', 'Ж'):
+                    gender = 'f'
+
+                surnames_db.add(fam, gender)
+                names_db.add(im, gender)
+                midnames_db.add(otch, gender)
+
+                count += 1
+                if count % 500000 == 0:
+                    print(f"   ... обработано {count} строк")
+
+    except Exception as e:
+        print(f"❌ Ошибка чтения CSV: {e}")
+    print(f"✓ Загружено {count} записей")
 
 
 def load_jsonl_dataset(path: Path) -> GenderedDict:
-    """Загружает JSONL в структуру с учетом пола."""
+    """Для JSONL считаем частоту = 1 (так как там просто список уникальных)"""
     db = GenderedDict()
-    if not path.exists():
-        print(f"⚠️ База не найдена: {path}")
-        return db
-
-    print(f"⏳ Загрузка словаря: {path.name}...")
+    if not path.exists(): return db
+    print(f"⏳ Подгрузка JSONL: {path.name}...")
     try:
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 try:
                     data = json.loads(line)
                     word = data.get("text") or data.get("name") or data.get("surname") or data.get("midname")
-                    gender = data.get("gender")  # Ожидаем 'm' или 'f'
-
+                    gender = data.get("gender")
                     if word:
                         db.add(word, gender)
-                except json.JSONDecodeError:
+                except:
                     continue
     except Exception as e:
-        print(f"❌ Ошибка чтения {path.name}: {e}")
-
-    print(f"✓ Загружено {len(db.all)} слов")
+        print(f"❌ Ошибка: {e}")
     return db
+
+
+MIN_FREQUENCY = 3  # Минимальная частота слова в базе, чтобы считаться "надежным"
 
 
 def correct_text(text: str, db: GenderedDict, target_gender: str = None) -> str:
     """
-    Исправляет текст.
-    Если target_gender задан ('m' или 'f'), ищет только в соответствующем подмножестве.
+    Автокоррекция:
+    1. Строгая длина.
+    2. Фильтрация редких слов (опечаток в базе).
+    3. Максимум совпадений (Hamming score).
+    4. При равенстве -> самое популярное.
     """
-    if not text:
+    if not text: return text
+    text = text.upper()
+    target_len = len(text)
+
+    # 1. Выбираем словарь частот
+    if target_gender == 'm':
+        candidates_counter = db.male
+    elif target_gender == 'f':
+        candidates_counter = db.female
+    else:
+        candidates_counter = db.all
+
+    # 2. Фильтруем кандидатов по длине
+    strict_candidates = [w for w in candidates_counter.keys() if len(w) == target_len]
+
+    if not strict_candidates:
         return text
 
-    # 1. Выбираем пространство поиска
-    if target_gender == 'm':
-        search_space = list(db.male)  # difflib требует list
-    elif target_gender == 'f':
-        search_space = list(db.female)
-    else:
-        search_space = list(db.all)
+    # Если исходное слово есть в базе и оно достаточно популярное — оставляем
+    if text in strict_candidates and candidates_counter[text] >= MIN_FREQUENCY:
+        return text
 
-    # Если словарь пуст (например, нет фильтрованных данных), ищем везде
-    if not search_space:
-        search_space = list(db.all)
+    # 3. Разделяем кандидатов на "надежных" и "редких"
+    trusted_candidates = [w for w in strict_candidates if candidates_counter[w] >= MIN_FREQUENCY]
 
-    # 2. Если слово уже есть в (правильном) словаре — не трогаем
-    if text in search_space:
-        return text  # Идеальное совпадение
+    # Если есть надежные кандидаты, ищем ТОЛЬКО среди них
+    # Это отсечет опечатки базы вида "ИВАНЕВ" (freq=1)
+    search_pool = trusted_candidates if trusted_candidates else strict_candidates
 
-    # 3. Ищем похожие
-    matches = difflib.get_close_matches(text, search_space, n=1, cutoff=CORRECTION_THRESHOLD)
-    if matches:
-        suggestion = matches[0]
-        print(
-            f"🔧 Исправление ({'М' if target_gender == 'm' else 'Ж' if target_gender == 'f' else '?'}) : {text} -> {suggestion}")
-        return suggestion
+    # 4. Поиск лучшего совпадения (Hamming)
+    best_score = -1
+    best_candidates = []
+
+    for candidate in search_pool:
+        score = sum(1 for i in range(target_len) if text[i] == candidate[i])
+
+        if score > best_score:
+            best_score = score
+            best_candidates = [candidate]
+        elif score == best_score:
+            best_candidates.append(candidate)
+
+    # Порог совпадения: если совпало меньше половины букв, может не стоит менять?
+    # Но пока оставим как есть (берем максимум)
+
+    if best_candidates and best_score > 0:
+        # 5. Выбираем победителя по частоте
+        winner = sorted(best_candidates, key=lambda w: candidates_counter[w], reverse=True)[0]
+
+        if winner != text:
+            freq = candidates_counter[winner]
+            # Логируем, было ли это "надежное" исправление
+            quality = "HighConf" if freq >= MIN_FREQUENCY else "LowConf"
+            print(f"   🔧 {text} -> {winner} (Match: {best_score}/{target_len}, Freq: {freq}, {quality})")
+
+        return winner
 
     return text
 
@@ -130,22 +203,39 @@ def main() -> None:
     parser.add_argument("--no-correct", action="store_true")
     args = parser.parse_args()
 
-    # 1. Загрузка умных словарей
     surnames_db = GenderedDict()
     names_db = GenderedDict()
     midnames_db = GenderedDict()
 
     if not args.no_correct:
-        print("--- Инициализация словарей ---")
-        surnames_db = load_jsonl_dataset(dict_dir / "surnames_table.jsonl")
-        names_db = load_jsonl_dataset(dict_dir / "names_table.jsonl")
-        midnames_db = load_jsonl_dataset(dict_dir / "midnames_table.jsonl")
-        print("------------------------------")
+        print("=== ЗАГРУЗКА БАЗ С ЧАСТОТАМИ ===")
+        # JSONL (частота = 1, так как данных о популярности там нет)
+        s_old = load_jsonl_dataset(dict_dir / "surnames_table.jsonl")
+        n_old = load_jsonl_dataset(dict_dir / "names_table.jsonl")
+        m_old = load_jsonl_dataset(dict_dir / "midnames_table.jsonl")
+
+        # Объединяем (сложение Counter'ов работает корректно)
+        surnames_db.all.update(s_old.all);
+        surnames_db.male.update(s_old.male);
+        surnames_db.female.update(s_old.female);
+        surnames_db.map.update(s_old.map)
+        names_db.all.update(n_old.all);
+        names_db.male.update(n_old.male);
+        names_db.female.update(n_old.female);
+        names_db.map.update(n_old.map)
+        midnames_db.all.update(m_old.all);
+        midnames_db.male.update(m_old.male);
+        midnames_db.female.update(m_old.female);
+        midnames_db.map.update(m_old.map)
+
+        # CSV (тут реальные частоты)
+        load_kaggle_dataset(dict_dir / "data.csv", names_db, surnames_db, midnames_db)
+
+        print(f"ИТОГО уникальных: Имен {len(names_db.all)}, Фам {len(surnames_db.all)}, Отч {len(midnames_db.all)}")
+        print("=================================")
 
     config = SheetConfig.load(args.config)
     grouped = group_cells(config.cells)
-
-    # Модель
     model_dir = Path(args.model_dir)
     model = keras.models.load_model(model_dir / "ocr_model.keras")
     labels = load_labels(model_dir / "labels.json")
@@ -166,45 +256,26 @@ def main() -> None:
         for scan_path in scan_paths:
             print(f"Processing {scan_path.name}...")
             image = load_image(str(scan_path))
-
             try:
                 target_height = config.image_height - args.padding
-                aligned = align_image(
-                    image,
-                    output_size=(config.image_width, target_height),
-                    top_padding=args.padding
-                )
+                aligned = align_image(image, output_size=(config.image_width, target_height), top_padding=args.padding)
             except Exception as e:
-                print(f"Skipping {scan_path.name}: alignment failed ({e})")
+                print(f"Skipping {scan_path.name}: {e}")
                 continue
 
-            # Сначала распознаем ВСЁ в сыром виде
-            raw_data = {
-                "filename": scan_path.name,
-                "last_name": "", "first_name": "", "patronymic": "",
-                "birth_date": "", "phone": "",
-            }
+            row_data = {"filename": scan_path.name, "last_name": "", "first_name": "", "patronymic": "",
+                        "birth_date": "", "phone": ""}
 
             for label_name, cells in grouped.items():
                 crops = []
-                crop_padding = 2
-
                 for cell in cells:
-                    y1 = max(0, cell.y - crop_padding)
-                    y2 = min(aligned.shape[0], cell.y + cell.h + crop_padding)
-                    x1 = max(0, cell.x - crop_padding)
-                    x2 = min(aligned.shape[1], cell.x + cell.w + crop_padding)
-
-                    crop = aligned[y1:y2, x1:x2]
+                    crop = aligned[max(0, cell.y - 2):min(aligned.shape[0], cell.y + cell.h + 2),
+                           max(0, cell.x - 2):min(aligned.shape[1], cell.x + cell.w + 2)]
                     processed = preprocess_cell(crop, size)
+                    if not is_empty_crop(processed):
+                        crops.append(processed)
 
-                    if is_empty_crop(processed, threshold=0.015):
-                        continue
-                    crops.append(processed)
-
-                if not crops:
-                    continue
-
+                if not crops: continue
                 batch = np.expand_dims(np.array(crops), axis=-1)
                 probabilities = model.predict(batch, verbose=0)
 
@@ -218,50 +289,27 @@ def main() -> None:
                 predictions = []
                 for idx in range(len(crops)):
                     pred_label = choose_allowed_label(probabilities[idx], labels, allowed)
-                    if pred_label == "Empty": continue
-                    char = LABEL_TO_CHAR.get(pred_label, "")
-                    predictions.append(char)
+                    if pred_label != "Empty":
+                        predictions.append(LABEL_TO_CHAR.get(pred_label, ""))
 
-                raw_data[label_name] = "".join(predictions)
+                row_data[label_name] = "".join(predictions)
 
-            # --- ИНТЕЛЛЕКТУАЛЬНАЯ КОРРЕКЦИЯ ---
-            final_row = raw_data.copy()
-
+            final_row = row_data.copy()
             if not args.no_correct:
                 detected_gender = None
-
-                # 1. Сначала исправляем ИМЯ (самый надежный индикатор пола)
-                raw_name = raw_data["first_name"]
+                raw_name = row_data["first_name"]
                 if raw_name:
-                    # Ищем без фильтра пола сначала
-                    corrected_name = correct_text(raw_name, names_db)
-                    final_row["first_name"] = corrected_name
+                    corr_name = correct_text(raw_name, names_db)
+                    final_row["first_name"] = corr_name
+                    detected_gender = names_db.map.get(corr_name)
+                    if detected_gender: print(f"   Пол: {detected_gender}")
 
-                    # Определяем пол по ИСПРАВЛЕННОМУ имени
-                    detected_gender = names_db.map.get(corrected_name)
-                    if detected_gender:
-                        print(f"   Пол определен по имени ({corrected_name}): {detected_gender}")
-                    else:
-                        print(f"   Пол не определен (имя {corrected_name} нет в базе или унисекс)")
-
-                # 2. Исправляем Фамилию (с учетом пола)
-                if raw_data["last_name"]:
-                    final_row["last_name"] = correct_text(
-                        raw_data["last_name"],
-                        surnames_db,
-                        target_gender=detected_gender
-                    )
-
-                # 3. Исправляем Отчество (с учетом пола)
-                if raw_data["patronymic"]:
-                    final_row["patronymic"] = correct_text(
-                        raw_data["patronymic"],
-                        midnames_db,
-                        target_gender=detected_gender
-                    )
+                if row_data["last_name"]:
+                    final_row["last_name"] = correct_text(row_data["last_name"], surnames_db, detected_gender)
+                if row_data["patronymic"]:
+                    final_row["patronymic"] = correct_text(row_data["patronymic"], midnames_db, detected_gender)
 
             writer.writerow(final_row)
-
     print(f"Saved CSV to {args.output}")
 
 
