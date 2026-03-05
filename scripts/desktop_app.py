@@ -104,11 +104,12 @@ class OCRDesktopApp:
         self.logo_photo: tk.PhotoImage | None = None
 
         self._configure_styles()
-        self._build_ui()
-
         if not self.login(initial=True):
             self.root.destroy()
             return
+
+        self._build_ui()
+        self.apply_role_permissions()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -144,7 +145,7 @@ class OCRDesktopApp:
         self._build_left_panel(root_frame)
         self._build_main_panel(root_frame)
 
-    def _load_logo_image(self, logo_path: Path, target_height: int = 96) -> tk.PhotoImage | None:
+    def _load_logo_image(self, logo_path: Path, target_height: int = 128) -> tk.PhotoImage | None:
         try:
             image = tk.PhotoImage(file=str(logo_path))
         except Exception as exc:  # noqa: BLE001
@@ -156,6 +157,10 @@ class OCRDesktopApp:
             # Сжимаем пропорционально целочисленным коэффициентом (без внешних зависимостей).
             factor = max(1, int(round(height / target_height)))
             image = image.subsample(factor, factor)
+        elif height < target_height:
+            # Увеличиваем пропорционально целочисленным коэффициентом.
+            factor = max(1, int(round(target_height / height)))
+            image = image.zoom(factor, factor)
 
         return image
 
@@ -164,7 +169,7 @@ class OCRDesktopApp:
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         header.grid_columnconfigure(2, weight=1)
 
-        logo_path = self.repo_root / "assets" / "sequoia_logo.png"
+        logo_path = self.repo_root / "assets" / "Sequoia_logo.svg"
         self.logo_photo = self._load_logo_image(logo_path) if logo_path.exists() else None
 
         if self.logo_photo is not None:
@@ -172,13 +177,13 @@ class OCRDesktopApp:
             logo_label = tk.Label(header, image=self.logo_photo, bg=BG_MAIN, bd=0, highlightthickness=0)
             logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
         else:
-            fallback = tk.Canvas(header, width=68, height=68, bg=BG_MAIN, highlightthickness=0)
+            fallback = tk.Canvas(header, width=128, height=128, bg=BG_MAIN, highlightthickness=0)
             fallback.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
-            fallback.create_line(22, 16, 22, 56, fill=COLOR_TEXT, width=4)
-            fallback.create_line(42, 24, 42, 56, fill=COLOR_TEXT, width=3)
-            fallback.create_polygon(22, 12, 8, 30, 36, 30, fill=COLOR_TEXT, outline=COLOR_TEXT)
-            fallback.create_polygon(22, 22, 10, 38, 34, 38, fill=COLOR_TEXT, outline=COLOR_TEXT)
-            fallback.create_polygon(42, 20, 34, 32, 50, 32, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_line(42, 28, 42, 108, fill=COLOR_TEXT, width=6)
+            fallback.create_line(78, 42, 78, 108, fill=COLOR_TEXT, width=5)
+            fallback.create_polygon(42, 18, 14, 54, 70, 54, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_polygon(42, 36, 18, 70, 66, 70, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_polygon(78, 34, 62, 58, 94, 58, fill=COLOR_TEXT, outline=COLOR_TEXT)
 
         ttk.Label(header, text="SEQUOIA PARK", style="HeaderTitle.TLabel").grid(row=0, column=1, sticky="w")
         ttk.Label(
@@ -348,8 +353,8 @@ class OCRDesktopApp:
             return
 
         is_root = self.current_role == "root"
-        self.notebook.tab(self.quality_tab_index, state="normal" if is_root else "disabled")
-        self.notebook.tab(self.train_tab_index, state="normal" if is_root else "disabled")
+        self.notebook.tab(self.quality_tab_index, state="normal" if is_root else "hidden")
+        self.notebook.tab(self.train_tab_index, state="normal" if is_root else "hidden")
         self.notebook.tab(self.crm_tab_index, state="normal")
 
         if not is_root:
