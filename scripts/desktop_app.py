@@ -144,18 +144,33 @@ class OCRDesktopApp:
         self._build_left_panel(root_frame)
         self._build_main_panel(root_frame)
 
+    def _load_logo_image(self, logo_path: Path, target_height: int = 68) -> tk.PhotoImage | None:
+        try:
+            image = tk.PhotoImage(file=str(logo_path))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[logo] failed to load {logo_path}: {exc}")
+            return None
+
+        height = max(1, image.height())
+        if height > target_height:
+            # Сжимаем пропорционально целочисленным коэффициентом (без внешних зависимостей).
+            factor = max(1, int(round(height / target_height)))
+            image = image.subsample(factor, factor)
+
+        return image
+
     def _build_header(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent, style="Root.TFrame")
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         header.grid_columnconfigure(2, weight=1)
 
-        logo_label = ttk.Label(header, style="Root.TFrame")
-        logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
-
         logo_path = self.repo_root / "assets" / "sequoia_logo.png"
-        if logo_path.exists():
-            self.logo_photo = tk.PhotoImage(file=str(logo_path))
-            logo_label.configure(image=self.logo_photo)
+        self.logo_photo = self._load_logo_image(logo_path) if logo_path.exists() else None
+
+        if self.logo_photo is not None:
+            # tk.Label надежнее отображает image в разных сборках Tk, чем ttk.Label.
+            logo_label = tk.Label(header, image=self.logo_photo, bg=BG_MAIN, bd=0, highlightthickness=0)
+            logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
         else:
             fallback = tk.Canvas(header, width=68, height=68, bg=BG_MAIN, highlightthickness=0)
             fallback.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
