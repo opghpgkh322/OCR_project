@@ -5,7 +5,19 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
+
+BG_MAIN = "#F9FFF6"
+BG_PANEL = "#FFFFFF"
+COLOR_ACCENT = "#7ED957"
+COLOR_ACCENT_DARK = "#5DA83F"
+COLOR_TEXT = "#1A1A1A"
+COLOR_MUTED = "#5D6D5A"
+
+PASSWORD_TO_ROLE = {
+    "opghpgkh": "root",
+    "admin": "user",
+}
 
 
 def open_folder(path: Path) -> None:
@@ -18,138 +30,336 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
+class LoginDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Tk, current_role: str | None = None) -> None:
+        super().__init__(parent)
+        self.title("Авторизация")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self.configure(bg=BG_PANEL)
+
+        self.role: str | None = None
+
+        frame = ttk.Frame(self, padding=14, style="Card.TFrame")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        caption = "Введите пароль для входа"
+        if current_role:
+            caption = f"Текущий пользователь: {current_role}. Введите пароль для смены пользователя"
+
+        ttk.Label(frame, text=caption, style="Body.TLabel", wraplength=360, justify=tk.LEFT).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
+        )
+        ttk.Label(frame, text="Пароль:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8))
+
+        self.password_entry = ttk.Entry(frame, show="*", width=26)
+        self.password_entry.grid(row=1, column=1, sticky="ew")
+        self.password_entry.focus_set()
+
+        btn_row = ttk.Frame(frame, style="Card.TFrame")
+        btn_row.grid(row=2, column=0, columnspan=2, sticky="e", pady=(12, 0))
+
+        ttk.Button(btn_row, text="Отмена", style="Action.TButton", command=self._cancel).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="Войти", style="Primary.TButton", command=self._submit).pack(side=tk.RIGHT)
+
+        self.password_entry.bind("<Return>", lambda _e: self._submit())
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _submit(self) -> None:
+        password = self.password_entry.get().strip()
+        role = PASSWORD_TO_ROLE.get(password)
+        if role is None:
+            messagebox.showerror("Ошибка", "Неверный пароль")
+            self.password_entry.delete(0, tk.END)
+            return
+        self.role = role
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.role = None
+        self.destroy()
+
+
 class OCRDesktopApp:
     def __init__(self, root: tk.Tk, repo_root: Path) -> None:
         self.root = root
         self.repo_root = repo_root
         self.python = sys.executable
 
-        self.root.title("OCR оператор — рукописные бланки")
-        self.root.geometry("980x700")
+        self.root.title("SEQUOIA PARK • OCR рабочее место")
+        self.root.geometry("1220x760")
+        self.root.minsize(1120, 700)
+        self.root.configure(bg=BG_MAIN)
 
         self.epochs_var = tk.StringVar(value="12")
         self.fine_tune_var = tk.BooleanVar(value=True)
         self.correction_var = tk.BooleanVar(value=True)
+        self.current_role = "user"
+        self.notebook: ttk.Notebook | None = None
+        self.quality_tab_index = 0
+        self.train_tab_index = 1
+        self.crm_tab_index = 2
+        self.role_label: ttk.Label | None = None
+        self.logo_photo: tk.PhotoImage | None = None
 
+        self._configure_styles()
         self._build_ui()
 
+        if not self.login(initial=True):
+            self.root.destroy()
+            return
+
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+
+        style.configure("Root.TFrame", background=BG_MAIN)
+        style.configure("Card.TFrame", background=BG_PANEL)
+        style.configure("SectionTitle.TLabel", background=BG_PANEL, foreground=COLOR_TEXT, font=("Segoe UI", 11, "bold"))
+        style.configure("Body.TLabel", background=BG_PANEL, foreground=COLOR_TEXT, font=("Segoe UI", 10))
+        style.configure("Hint.TLabel", background=BG_PANEL, foreground=COLOR_MUTED, font=("Segoe UI", 9))
+        style.configure("HeaderTitle.TLabel", background=BG_MAIN, foreground=COLOR_TEXT, font=("Segoe UI", 24, "bold"))
+        style.configure("HeaderSub.TLabel", background=BG_MAIN, foreground=COLOR_MUTED, font=("Segoe UI", 11))
+        style.configure("HeaderRole.TLabel", background=BG_MAIN, foreground=COLOR_TEXT, font=("Segoe UI", 10, "bold"))
+
+        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(18, 10), foreground="#10250E", background=COLOR_ACCENT)
+        style.map("Primary.TButton", background=[("active", COLOR_ACCENT_DARK), ("pressed", COLOR_ACCENT_DARK)])
+
+        style.configure("Action.TButton", font=("Segoe UI", 10), padding=(10, 8), background="#E8F8DF")
+        style.map("Action.TButton", background=[("active", "#D7F2CA")])
+
+        style.configure("Notebook.TNotebook", background=BG_PANEL, borderwidth=0)
+        style.configure("Notebook.TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=(16, 10))
+
     def _build_ui(self) -> None:
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        root_frame = ttk.Frame(self.root, style="Root.TFrame")
+        root_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+        root_frame.grid_columnconfigure(0, weight=0)
+        root_frame.grid_columnconfigure(1, weight=1)
+        root_frame.grid_rowconfigure(2, weight=1)
 
-        scans_tab = ttk.Frame(notebook)
-        quality_tab = ttk.Frame(notebook)
-        train_tab = ttk.Frame(notebook)
-        crm_tab = ttk.Frame(notebook)
+        self._build_header(root_frame)
+        self._build_left_panel(root_frame)
+        self._build_main_panel(root_frame)
 
-        notebook.add(scans_tab, text="1. Сканирование и OCR")
-        notebook.add(quality_tab, text="2. Коррекция и датасет")
-        notebook.add(train_tab, text="3. Дообучение")
-        notebook.add(crm_tab, text="4. CRM выгрузка")
+    def _load_logo_image(self, logo_path: Path, target_height: int = 96) -> tk.PhotoImage | None:
+        try:
+            image = tk.PhotoImage(file=str(logo_path))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[logo] failed to load {logo_path}: {exc}")
+            return None
 
-        self._build_scans_tab(scans_tab)
-        self._build_quality_tab(quality_tab)
-        self._build_train_tab(train_tab)
-        self._build_crm_tab(crm_tab)
+        height = max(1, image.height())
+        if height > target_height:
+            # Сжимаем пропорционально целочисленным коэффициентом (без внешних зависимостей).
+            factor = max(1, int(round(height / target_height)))
+            image = image.subsample(factor, factor)
 
-        log_frame = ttk.LabelFrame(self.root, text="Лог выполнения")
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        return image
 
-        self.log_text = tk.Text(log_frame, wrap=tk.WORD, height=12)
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+    def _build_header(self, parent: ttk.Frame) -> None:
+        header = ttk.Frame(parent, style="Root.TFrame")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        header.grid_columnconfigure(2, weight=1)
 
-    def _build_scans_tab(self, parent: ttk.Frame) -> None:
+        logo_path = self.repo_root / "assets" / "sequoia_logo.png"
+        self.logo_photo = self._load_logo_image(logo_path) if logo_path.exists() else None
+
+        if self.logo_photo is not None:
+            # tk.Label надежнее отображает image в разных сборках Tk, чем ttk.Label.
+            logo_label = tk.Label(header, image=self.logo_photo, bg=BG_MAIN, bd=0, highlightthickness=0)
+            logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
+        else:
+            fallback = tk.Canvas(header, width=68, height=68, bg=BG_MAIN, highlightthickness=0)
+            fallback.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
+            fallback.create_line(22, 16, 22, 56, fill=COLOR_TEXT, width=4)
+            fallback.create_line(42, 24, 42, 56, fill=COLOR_TEXT, width=3)
+            fallback.create_polygon(22, 12, 8, 30, 36, 30, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_polygon(22, 22, 10, 38, 34, 38, fill=COLOR_TEXT, outline=COLOR_TEXT)
+            fallback.create_polygon(42, 20, 34, 32, 50, 32, fill=COLOR_TEXT, outline=COLOR_TEXT)
+
+        ttk.Label(header, text="SEQUOIA PARK", style="HeaderTitle.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(
+            header,
+            text="OCR для рукописных бланков • Рабочая панель кассира",
+            style="HeaderSub.TLabel",
+        ).grid(row=1, column=1, sticky="w")
+
+        role_panel = ttk.Frame(header, style="Root.TFrame")
+        role_panel.grid(row=0, column=2, rowspan=2, sticky="e")
+        self.role_label = ttk.Label(role_panel, text="Роль: user", style="HeaderRole.TLabel")
+        self.role_label.pack(anchor="e")
+        ttk.Button(role_panel, text="Сменить пользователя", style="Action.TButton", command=self.switch_user).pack(anchor="e", pady=(8, 0))
+
+    def _build_left_panel(self, parent: ttk.Frame) -> None:
+        left = ttk.Frame(parent, style="Card.TFrame", padding=14)
+        left.grid(row=1, column=0, rowspan=2, sticky="nsw", padx=(0, 12))
+
+
+
+        ttk.Button(left, text="▶ Запустить OCR", style="Primary.TButton", command=self.run_ocr_batch).pack(fill=tk.X)
+
+        ttk.Checkbutton(
+            left,
+            text="Включить словарную автокоррекцию ФИО",
+            variable=self.correction_var,
+        ).pack(anchor="w", pady=(10, 12))
+
+        ttk.Separator(left, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+
+        ttk.Label(left, text="Рабочие папки", style="SectionTitle.TLabel").pack(anchor="w", pady=(6, 6))
         scans_root = self.repo_root / "scans"
         inbox = scans_root / "inbox"
         processed = scans_root / "processed"
         failed = scans_root / "failed"
-
         for folder in (inbox, processed, failed):
             folder.mkdir(parents=True, exist_ok=True)
 
+        ttk.Button(left, text="Открыть scans/inbox", style="Action.TButton", command=lambda: open_folder(inbox)).pack(fill=tk.X, pady=2)
+        ttk.Button(left, text="Открыть scans/processed", style="Action.TButton", command=lambda: open_folder(processed)).pack(fill=tk.X, pady=2)
+        ttk.Button(left, text="Открыть scans/failed", style="Action.TButton", command=lambda: open_folder(failed)).pack(fill=tk.X, pady=2)
+        ttk.Button(left, text="Открыть output.csv", style="Action.TButton", command=self.open_output_file).pack(fill=tk.X, pady=(8, 2))
+
+        ttk.Separator(left, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        ttk.Label(left, text="Порядок работы", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 6))
         ttk.Label(
-            parent,
-            text=(
-                "Поток работы:\n"
-                "1) Сканер сохраняет новые изображения в scans/inbox\n"
-                "2) Нажмите 'Запустить OCR новых сканов'\n"
-                "3) Обработанные файлы автоматически уйдут в scans/processed, ошибки — в scans/failed"
-            ),
+            left,
+            text="1) Сканер кладет файлы в scans/inbox\n"
+                 "2) Нажмите кнопку OCR\n"
+                 "3) Отправьте данные о посетителях в CRM",
+            style="Hint.TLabel",
             justify=tk.LEFT,
-        ).pack(anchor=tk.W, padx=10, pady=10)
+        ).pack(anchor="w")
 
-        ttk.Checkbutton(
-            parent,
-            text="Включить словарную автокоррекцию ФИО",
-            variable=self.correction_var,
-        ).pack(anchor=tk.W, padx=10, pady=(0, 10))
+    def _build_main_panel(self, parent: ttk.Frame) -> None:
+        panel = ttk.Frame(parent, style="Root.TFrame")
+        panel.grid(row=1, column=1, rowspan=2, sticky="nsew")
+        panel.grid_rowconfigure(1, weight=1)
+        panel.grid_rowconfigure(2, weight=1)
+        panel.grid_columnconfigure(0, weight=1)
 
-        button_row = ttk.Frame(parent)
-        button_row.pack(anchor=tk.W, padx=10, pady=5)
+        notebook_card = ttk.Frame(panel, style="Card.TFrame", padding=10)
+        notebook_card.grid(row=0, column=0, sticky="ew")
 
-        ttk.Button(button_row, text="Открыть scans/inbox", command=lambda: open_folder(inbox)).grid(row=0, column=0, padx=4)
-        ttk.Button(button_row, text="Открыть scans/processed", command=lambda: open_folder(processed)).grid(row=0, column=1, padx=4)
-        ttk.Button(button_row, text="Открыть scans/failed", command=lambda: open_folder(failed)).grid(row=0, column=2, padx=4)
+        self.notebook = ttk.Notebook(notebook_card, style="Notebook.TNotebook")
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        action_row = ttk.Frame(parent)
-        action_row.pack(anchor=tk.W, padx=10, pady=8)
+        quality_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
+        train_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
+        crm_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
 
-        ttk.Button(action_row, text="Запустить OCR новых сканов", command=self.run_ocr_batch).grid(row=0, column=0, padx=4)
-        ttk.Button(action_row, text="Открыть output.csv", command=self.open_output_file).grid(row=0, column=1, padx=4)
+        self.notebook.add(quality_tab, text="Качество распознавания")
+        self.notebook.add(train_tab, text="Дообучение модели")
+        self.notebook.add(crm_tab, text="CRM и выгрузка")
+
+        self._build_quality_tab(quality_tab)
+        self._build_train_tab(train_tab)
+        self._build_crm_tab(crm_tab)
+
+        log_card = ttk.Frame(panel, style="Card.TFrame", padding=10)
+        log_card.grid(row=1, column=0, rowspan=2, sticky="nsew", pady=(10, 0))
+        log_card.grid_rowconfigure(1, weight=1)
+        log_card.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(log_card, text="Окно сообщений и логи", style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.log_text = tk.Text(
+            log_card,
+            wrap=tk.WORD,
+            height=15,
+            bg="#F6FFF1",
+            fg=COLOR_TEXT,
+            insertbackground=COLOR_TEXT,
+            relief=tk.FLAT,
+            padx=10,
+            pady=8,
+            font=("Consolas", 10),
+        )
+        self.log_text.grid(row=1, column=0, sticky="nsew")
 
     def _build_quality_tab(self, parent: ttk.Frame) -> None:
-        ttk.Label(
-            parent,
-            text=(
-                "Используйте инструменты ниже для поддержки качества распознавания:\n"
-                "• Корректировка координат ячеек\n"
-                "• Ручная валидация полей и пополнение dataset_review\n"
-                "• Нормализация (invert) изображений в dataset_review"
-            ),
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, padx=10, pady=10)
+        ttk.Label(parent, text="Инструменты контроля качества OCR", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 6))
 
-        row1 = ttk.Frame(parent)
-        row1.pack(anchor=tk.W, padx=10, pady=5)
-        ttk.Button(row1, text="1) Коррекция координат ячеек", command=self.run_configurator).grid(row=0, column=0, padx=4)
-        ttk.Button(row1, text="2) Коррекция распознанных бланков", command=self.run_review).grid(row=0, column=1, padx=4)
-        ttk.Button(row1, text="3) Запустить invert_dataset_review", command=self.run_invert_review).grid(row=0, column=2, padx=4)
 
-        row2 = ttk.Frame(parent)
-        row2.pack(anchor=tk.W, padx=10, pady=5)
-        ttk.Button(row2, text="Открыть dataset_external", command=lambda: open_folder(self.repo_root / "dataset_external")).grid(row=0, column=0, padx=4)
-        ttk.Button(row2, text="Открыть dataset_review", command=lambda: open_folder(self.repo_root / "dataset_review")).grid(row=0, column=1, padx=4)
+        row1 = ttk.Frame(parent, style="Card.TFrame")
+        row1.pack(anchor="w", fill=tk.X)
+        ttk.Button(row1, text="Коррекция координат ячеек", style="Action.TButton", command=self.run_configurator).grid(row=0, column=0, padx=(0, 6), pady=3, sticky="w")
+        ttk.Button(row1, text="Коррекция распознанных бланков", style="Action.TButton", command=self.run_review).grid(row=0, column=1, padx=6, pady=3, sticky="w")
+        ttk.Button(row1, text="Запустить invert_dataset_review", style="Action.TButton", command=self.run_invert_review).grid(row=0, column=2, padx=6, pady=3, sticky="w")
+
+        row2 = ttk.Frame(parent, style="Card.TFrame")
+        row2.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        ttk.Button(row2, text="Открыть dataset_external", style="Action.TButton", command=lambda: open_folder(self.repo_root / "dataset_external")).grid(row=0, column=0, padx=(0, 6), pady=3)
+        ttk.Button(row2, text="Открыть dataset_review", style="Action.TButton", command=lambda: open_folder(self.repo_root / "dataset_review")).grid(row=0, column=1, padx=6, pady=3)
 
     def _build_train_tab(self, parent: ttk.Frame) -> None:
-        params = ttk.Frame(parent)
-        params.pack(anchor=tk.W, padx=10, pady=15)
+        ttk.Label(parent, text="Дообучение OCR модели", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 8))
 
-        ttk.Label(params, text="EPOCHS:").grid(row=0, column=0, padx=4, sticky=tk.W)
-        ttk.Entry(params, textvariable=self.epochs_var, width=8).grid(row=0, column=1, padx=4, sticky=tk.W)
+        params = ttk.Frame(parent, style="Card.TFrame")
+        params.pack(anchor="w", pady=(0, 8))
+        ttk.Label(params, text="EPOCHS:", style="Body.TLabel").grid(row=0, column=0, padx=(0, 6), sticky="w")
+        ttk.Entry(params, textvariable=self.epochs_var, width=8).grid(row=0, column=1, padx=(0, 10), sticky="w")
 
-        ttk.Checkbutton(params, text="Дообучение существующей модели (fine-tune)", variable=self.fine_tune_var).grid(
-            row=1, column=0, columnspan=2, padx=4, pady=8, sticky=tk.W
-        )
+        ttk.Checkbutton(params, text="Дообучение существующей модели (fine-tune)", variable=self.fine_tune_var).grid(row=1, column=0, columnspan=2, pady=(8, 0), sticky="w")
 
-        ttk.Button(parent, text="Запустить обучение", command=self.run_training).pack(anchor=tk.W, padx=10, pady=5)
+        ttk.Button(parent, text="Запустить обучение", style="Action.TButton", command=self.run_training).pack(anchor="w")
 
     def _build_crm_tab(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Выгрузка в CRM", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(
             parent,
-            text=(
-                "Выгрузка в CRM отправляет только новых клиентов:\n"
-                "• сравнение по отпечатку (ФИО + дата рождения + телефон)\n"
-                "• уже отправленные записи хранятся в crm/crm_sent_registry.csv"
-            ),
+            text="Отправляйте только новых клиентов: фильтр по отпечатку ФИО + дата рождения + телефон.",
+            style="Hint.TLabel",
+            wraplength=720,
             justify=tk.LEFT,
-        ).pack(anchor=tk.W, padx=10, pady=10)
+        ).pack(anchor="w", pady=(0, 8))
 
-        actions = ttk.Frame(parent)
-        actions.pack(anchor=tk.W, padx=10, pady=6)
+        actions = ttk.Frame(parent, style="Card.TFrame")
+        actions.pack(anchor="w", fill=tk.X)
 
-        ttk.Button(actions, text="Сформировать CSV только новых клиентов", command=self.run_crm_export).grid(row=0, column=0, padx=4)
-        ttk.Button(actions, text="Открыть crm/exports", command=lambda: open_folder(self.repo_root / "crm" / "exports")).grid(row=0, column=1, padx=4)
-        ttk.Button(actions, text="Открыть реестр CRM", command=self.open_crm_registry).grid(row=0, column=2, padx=4)
+        ttk.Button(actions, text="Сформировать CSV только новых клиентов", style="Action.TButton", command=self.run_crm_export).grid(row=0, column=0, padx=(0, 6), pady=3)
+        ttk.Button(actions, text="Открыть crm/exports", style="Action.TButton", command=lambda: open_folder(self.repo_root / "crm" / "exports")).grid(row=0, column=1, padx=6, pady=3)
+        ttk.Button(actions, text="Открыть реестр CRM", style="Action.TButton", command=self.open_crm_registry).grid(row=0, column=2, padx=6, pady=3)
+
+    def login(self, initial: bool = False) -> bool:
+        dialog = LoginDialog(self.root, None if initial else self.current_role)
+        self.root.wait_window(dialog)
+        if dialog.role is None:
+            if initial:
+                return False
+            return False
+
+        self.current_role = dialog.role
+        self.apply_role_permissions()
+        self.log(f"🔐 Выполнен вход: {self.current_role}")
+        return True
+
+    def switch_user(self) -> None:
+        if self.login(initial=False):
+            return
+        self.log("ℹ️ Смена пользователя отменена")
+
+    def apply_role_permissions(self) -> None:
+        if self.role_label is not None:
+            self.role_label.configure(text=f"Роль: {self.current_role}")
+
+        if self.notebook is None:
+            return
+
+        is_root = self.current_role == "root"
+        self.notebook.tab(self.quality_tab_index, state="normal" if is_root else "disabled")
+        self.notebook.tab(self.train_tab_index, state="normal" if is_root else "disabled")
+        self.notebook.tab(self.crm_tab_index, state="normal")
+
+        if not is_root:
+            self.notebook.select(self.crm_tab_index)
+
+    def _require_root(self) -> bool:
+        if self.current_role == "root":
+            return True
+        messagebox.showwarning("Недостаточно прав", "Для этого действия нужен root-пароль")
+        return False
 
     def log(self, text: str) -> None:
         self.log_text.insert(tk.END, text + "\n")
@@ -186,18 +396,27 @@ class OCRDesktopApp:
         self.run_command(command, "OCR новых сканов")
 
     def run_configurator(self) -> None:
+        if not self._require_root():
+            return
         command = [self.python, str(self.repo_root / "scripts" / "02_configurator.py")]
         self.run_command(command, "Редактор координат")
 
     def run_review(self) -> None:
+        if not self._require_root():
+            return
         command = [self.python, str(self.repo_root / "scripts" / "interactive_trainer.py")]
         self.run_command(command, "Коррекция распознавания")
 
     def run_invert_review(self) -> None:
+        if not self._require_root():
+            return
         command = [self.python, str(self.repo_root / "invert_dataset_review.py")]
         self.run_command(command, "Invert dataset_review")
 
     def run_training(self) -> None:
+        if not self._require_root():
+            return
+
         try:
             epochs = int(self.epochs_var.get())
             if epochs <= 0:
@@ -253,7 +472,7 @@ def main() -> None:
 
     root = tk.Tk()
     app = OCRDesktopApp(root=root, repo_root=Path(args.repo_root))
-    app.log("Приложение запущено. Начните со вкладки 'Сканирование и OCR'.")
+    app.log("Приложение запущено. Войдите под root или user.")
     root.mainloop()
 
 
