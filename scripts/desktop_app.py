@@ -30,57 +30,6 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
-class LoginDialog(tk.Toplevel):
-    def __init__(self, parent: tk.Tk, current_role: str | None = None) -> None:
-        super().__init__(parent)
-        self.title("Авторизация")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-        self.configure(bg=BG_PANEL)
-
-        self.role: str | None = None
-
-        frame = ttk.Frame(self, padding=14, style="Card.TFrame")
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        caption = "Введите пароль для входа"
-        if current_role:
-            caption = f"Текущий пользователь: {current_role}. Введите пароль для смены пользователя"
-
-        ttk.Label(frame, text=caption, style="Body.TLabel", wraplength=360, justify=tk.LEFT).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
-        )
-        ttk.Label(frame, text="Пароль:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8))
-
-        self.password_entry = ttk.Entry(frame, show="*", width=26)
-        self.password_entry.grid(row=1, column=1, sticky="ew")
-        self.password_entry.focus_set()
-
-        btn_row = ttk.Frame(frame, style="Card.TFrame")
-        btn_row.grid(row=2, column=0, columnspan=2, sticky="e", pady=(12, 0))
-
-        ttk.Button(btn_row, text="Отмена", style="Action.TButton", command=self._cancel).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(btn_row, text="Войти", style="Primary.TButton", command=self._submit).pack(side=tk.RIGHT)
-
-        self.password_entry.bind("<Return>", lambda _e: self._submit())
-        self.protocol("WM_DELETE_WINDOW", self._cancel)
-
-    def _submit(self) -> None:
-        password = self.password_entry.get().strip()
-        role = PASSWORD_TO_ROLE.get(password)
-        if role is None:
-            messagebox.showerror("Ошибка", "Неверный пароль")
-            self.password_entry.delete(0, tk.END)
-            return
-        self.role = role
-        self.destroy()
-
-    def _cancel(self) -> None:
-        self.role = None
-        self.destroy()
-
-
 class OCRDesktopApp:
     def __init__(self, root: tk.Tk, repo_root: Path) -> None:
         self.root = root
@@ -102,14 +51,11 @@ class OCRDesktopApp:
         self.crm_tab_index = 2
         self.role_label: ttk.Label | None = None
         self.logo_photo: tk.PhotoImage | None = None
+        self.log_text: tk.Text | None = None
+        self._login_password_var = tk.StringVar()
 
         self._configure_styles()
-        if not self.login(initial=True):
-            self.root.destroy()
-            return
-
-        self._build_ui()
-        self.apply_role_permissions()
+        self.show_login_view(initial=True)
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -134,7 +80,76 @@ class OCRDesktopApp:
         style.configure("Notebook.TNotebook", background=BG_PANEL, borderwidth=0)
         style.configure("Notebook.TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=(16, 10))
 
+    def _clear_root(self) -> None:
+        for child in self.root.winfo_children():
+            child.destroy()
+        self.notebook = None
+        self.role_label = None
+        self.log_text = None
+
+    def show_login_view(self, initial: bool) -> None:
+        self._clear_root()
+
+        wrap = ttk.Frame(self.root, style="Root.TFrame", padding=16)
+        wrap.pack(fill=tk.BOTH, expand=True)
+        wrap.grid_rowconfigure(0, weight=1)
+        wrap.grid_columnconfigure(0, weight=1)
+
+        card = ttk.Frame(wrap, style="Card.TFrame", padding=20)
+        card.grid(row=0, column=0)
+        card.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(card, text="Авторизация", style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        caption = "Введите пароль для входа"
+        if not initial:
+            caption = f"Текущий пользователь: {self.current_role}. Введите пароль для смены пользователя"
+
+        ttk.Label(card, text=caption, style="Body.TLabel", wraplength=420, justify=tk.LEFT).grid(row=1, column=0, sticky="w", pady=(0, 10))
+
+        password_row = ttk.Frame(card, style="Card.TFrame")
+        password_row.grid(row=2, column=0, sticky="ew")
+        ttk.Label(password_row, text="Пароль:", style="Body.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+
+        self._login_password_var.set("")
+        password_entry = ttk.Entry(password_row, textvariable=self._login_password_var, show="*", width=32)
+        password_entry.pack(side=tk.LEFT)
+        password_entry.focus_set()
+
+        buttons = ttk.Frame(card, style="Card.TFrame")
+        buttons.grid(row=3, column=0, sticky="e", pady=(12, 0))
+
+        ttk.Button(buttons, text="Отмена", style="Action.TButton", command=lambda: self._cancel_login(initial)).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(buttons, text="Войти", style="Primary.TButton", command=lambda: self._submit_login(initial)).pack(side=tk.RIGHT)
+
+        password_entry.bind("<Return>", lambda _e: self._submit_login(initial))
+
+    def _submit_login(self, initial: bool) -> None:
+        password = self._login_password_var.get().strip()
+        role = PASSWORD_TO_ROLE.get(password)
+        if role is None:
+            messagebox.showerror("Ошибка", "Неверный пароль")
+            self._login_password_var.set("")
+            return
+
+        self.current_role = role
+        self._build_ui()
+        self.apply_role_permissions()
+        self.log(f"🔐 Выполнен вход: {self.current_role}")
+        if initial:
+            self.log("Приложение запущено. Войдите под root или user.")
+
+    def _cancel_login(self, initial: bool) -> None:
+        if initial:
+            self.root.destroy()
+            return
+        self._build_ui()
+        self.apply_role_permissions()
+        self.log("ℹ️ Смена пользователя отменена")
+
     def _build_ui(self) -> None:
+        self._clear_root()
+
         root_frame = ttk.Frame(self.root, style="Root.TFrame")
         root_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
         root_frame.grid_columnconfigure(0, weight=0)
@@ -154,11 +169,9 @@ class OCRDesktopApp:
 
         height = max(1, image.height())
         if height > target_height:
-            # Сжимаем пропорционально целочисленным коэффициентом (без внешних зависимостей).
             factor = max(1, int(round(height / target_height)))
             image = image.subsample(factor, factor)
         elif height < target_height:
-            # Увеличиваем пропорционально целочисленным коэффициентом.
             factor = max(1, int(round(target_height / height)))
             image = image.zoom(factor, factor)
 
@@ -173,7 +186,6 @@ class OCRDesktopApp:
         self.logo_photo = self._load_logo_image(logo_path) if logo_path.exists() else None
 
         if self.logo_photo is not None:
-            # tk.Label надежнее отображает image в разных сборках Tk, чем ttk.Label.
             logo_label = tk.Label(header, image=self.logo_photo, bg=BG_MAIN, bd=0, highlightthickness=0)
             logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(4, 12))
         else:
@@ -201,8 +213,6 @@ class OCRDesktopApp:
     def _build_left_panel(self, parent: ttk.Frame) -> None:
         left = ttk.Frame(parent, style="Card.TFrame", padding=14)
         left.grid(row=1, column=0, rowspan=2, sticky="nsw", padx=(0, 12))
-
-
 
         ttk.Button(left, text="▶ Запустить OCR", style="Primary.TButton", command=self.run_ocr_batch).pack(fill=tk.X)
 
@@ -232,8 +242,8 @@ class OCRDesktopApp:
         ttk.Label(
             left,
             text="1) Сканер кладет файлы в scans/inbox\n"
-                 "2) Нажмите кнопку OCR\n"
-                 "3) Отправьте данные о посетителях в CRM",
+            "2) Нажмите кнопку OCR\n"
+            "3) Отправьте данные о посетителях в CRM",
             style="Hint.TLabel",
             justify=tk.LEFT,
         ).pack(anchor="w")
@@ -286,7 +296,6 @@ class OCRDesktopApp:
     def _build_quality_tab(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Инструменты контроля качества OCR", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 6))
 
-
         row1 = ttk.Frame(parent, style="Card.TFrame")
         row1.pack(anchor="w", fill=tk.X)
         ttk.Button(row1, text="Коррекция координат ячеек", style="Action.TButton", command=self.run_configurator).grid(row=0, column=0, padx=(0, 6), pady=3, sticky="w")
@@ -327,23 +336,8 @@ class OCRDesktopApp:
         ttk.Button(actions, text="Открыть crm/exports", style="Action.TButton", command=lambda: open_folder(self.repo_root / "crm" / "exports")).grid(row=0, column=1, padx=6, pady=3)
         ttk.Button(actions, text="Открыть реестр CRM", style="Action.TButton", command=self.open_crm_registry).grid(row=0, column=2, padx=6, pady=3)
 
-    def login(self, initial: bool = False) -> bool:
-        dialog = LoginDialog(self.root, None if initial else self.current_role)
-        self.root.wait_window(dialog)
-        if dialog.role is None:
-            if initial:
-                return False
-            return False
-
-        self.current_role = dialog.role
-        self.apply_role_permissions()
-        self.log(f"🔐 Выполнен вход: {self.current_role}")
-        return True
-
     def switch_user(self) -> None:
-        if self.login(initial=False):
-            return
-        self.log("ℹ️ Смена пользователя отменена")
+        self.show_login_view(initial=False)
 
     def apply_role_permissions(self) -> None:
         if self.role_label is not None:
@@ -367,6 +361,9 @@ class OCRDesktopApp:
         return False
 
     def log(self, text: str) -> None:
+        if self.log_text is None:
+            print(text)
+            return
         self.log_text.insert(tk.END, text + "\n")
         self.log_text.see(tk.END)
 
@@ -476,8 +473,7 @@ def main() -> None:
     args = parser.parse_args()
 
     root = tk.Tk()
-    app = OCRDesktopApp(root=root, repo_root=Path(args.repo_root))
-    app.log("Приложение запущено. Войдите под root или user.")
+    OCRDesktopApp(root=root, repo_root=Path(args.repo_root))
     root.mainloop()
 
 
