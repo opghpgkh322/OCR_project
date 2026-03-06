@@ -1,5 +1,8 @@
 import argparse
+import csv
+import json
 import os
+import random
 import subprocess
 import sys
 import threading
@@ -45,14 +48,22 @@ class OCRDesktopApp:
         self.fine_tune_var = tk.BooleanVar(value=True)
         self.correction_var = tk.BooleanVar(value=True)
         self.current_role = "user"
+
         self.notebook: ttk.Notebook | None = None
         self.quality_tab_index = 0
         self.train_tab_index = 1
         self.crm_tab_index = 2
+        self.dictionary_tab_index = 3
+
         self.role_label: ttk.Label | None = None
         self.logo_photo: tk.PhotoImage | None = None
         self.log_text: tk.Text | None = None
         self._login_password_var = tk.StringVar()
+
+        self.dict_field_var = tk.StringVar(value="surname")
+        self.dict_search_var = tk.StringVar()
+        self.dict_add_var = tk.StringVar()
+        self.dict_remove_var = tk.StringVar()
 
         self._configure_styles()
         self.show_login_view(initial=True)
@@ -264,14 +275,17 @@ class OCRDesktopApp:
         quality_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
         train_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
         crm_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
+        dictionary_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=12)
 
         self.notebook.add(quality_tab, text="Качество распознавания")
         self.notebook.add(train_tab, text="Дообучение модели")
         self.notebook.add(crm_tab, text="CRM и выгрузка")
+        self.notebook.add(dictionary_tab, text="Работа со словарём")
 
         self._build_quality_tab(quality_tab)
         self._build_train_tab(train_tab)
         self._build_crm_tab(crm_tab)
+        self._build_dictionary_tab(dictionary_tab)
 
         log_card = ttk.Frame(panel, style="Card.TFrame", padding=10)
         log_card.grid(row=1, column=0, rowspan=2, sticky="nsew", pady=(10, 0))
@@ -336,6 +350,243 @@ class OCRDesktopApp:
         ttk.Button(actions, text="Открыть crm/exports", style="Action.TButton", command=lambda: open_folder(self.repo_root / "crm" / "exports")).grid(row=0, column=1, padx=6, pady=3)
         ttk.Button(actions, text="Открыть реестр CRM", style="Action.TButton", command=self.open_crm_registry).grid(row=0, column=2, padx=6, pady=3)
 
+    def _build_dictionary_tab(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Работа со словарём", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(
+            parent,
+            text="Поиск/добавление/удаление словарных записей по части ФИО.",
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).pack(anchor="w", pady=(0, 10))
+
+        field_row = ttk.Frame(parent, style="Card.TFrame")
+        field_row.pack(anchor="w", fill=tk.X, pady=(0, 10))
+        ttk.Label(field_row, text="Часть ФИО:", style="Body.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+        field_combo = ttk.Combobox(
+            field_row,
+            textvariable=self.dict_field_var,
+            values=("surname", "name", "patronymic"),
+            state="readonly",
+            width=18,
+        )
+        field_combo.pack(side=tk.LEFT)
+
+        search_card = ttk.Frame(parent, style="Card.TFrame")
+        search_card.pack(anchor="w", fill=tk.X, pady=(0, 8))
+        ttk.Label(search_card, text="Поиск", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        search_row = ttk.Frame(search_card, style="Card.TFrame")
+        search_row.pack(anchor="w", fill=tk.X)
+        ttk.Entry(search_row, textvariable=self.dict_search_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(search_row, text="Найти", style="Action.TButton", command=self.search_dictionary).pack(side=tk.LEFT)
+
+        add_card = ttk.Frame(parent, style="Card.TFrame")
+        add_card.pack(anchor="w", fill=tk.X, pady=(0, 8))
+        ttk.Label(add_card, text="Добавление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        add_row = ttk.Frame(add_card, style="Card.TFrame")
+        add_row.pack(anchor="w", fill=tk.X)
+        ttk.Entry(add_row, textvariable=self.dict_add_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(add_row, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
+
+        remove_card = ttk.Frame(parent, style="Card.TFrame")
+        remove_card.pack(anchor="w", fill=tk.X)
+        ttk.Label(remove_card, text="Удаление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        remove_row = ttk.Frame(remove_card, style="Card.TFrame")
+        remove_row.pack(anchor="w", fill=tk.X)
+        ttk.Entry(remove_row, textvariable=self.dict_remove_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(remove_row, text="Удалить", style="Action.TButton", command=self.remove_dictionary_word).pack(side=tk.LEFT)
+
+    def _dictionary_jsonl_path(self, field: str) -> Path:
+        dict_dir = self.repo_root / "dictionaries"
+        if field == "surname":
+            return dict_dir / "surnames_table.jsonl"
+        if field == "name":
+            return dict_dir / "names_table.jsonl"
+        return dict_dir / "midnames_table.jsonl"
+
+    def _dictionary_csv_path(self) -> Path:
+        return self.repo_root / "dictionaries" / "data.csv"
+
+    def _read_jsonl(self, path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        rows: list[dict] = []
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return rows
+
+    def _write_jsonl(self, path: Path, rows: list[dict]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def _all_texts_by_gender(self, field: str, gender: str) -> list[str]:
+        rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+        values: list[str] = []
+        for row in rows:
+            text = str(row.get("text", "")).strip()
+            row_gender = row.get("gender")
+            if not text:
+                continue
+            if row_gender == gender or row_gender is None:
+                values.append(text)
+        return values
+
+    def _surname_forms(self, surname: str) -> tuple[str, str]:
+        base = surname.strip()
+        if base.endswith("А") and len(base) > 1:
+            return base[:-1], base
+        return base, f"{base}А"
+
+    def _random_fio_rows(self, field: str, value: str, count: int = 5) -> list[tuple[str, str, str, str]]:
+        male_names = self._all_texts_by_gender("name", "m") or ["АЛЕКСАНДР"]
+        female_names = self._all_texts_by_gender("name", "f") or ["АННА"]
+        male_mid = self._all_texts_by_gender("patronymic", "m") or ["АЛЕКСАНДРОВИЧ"]
+        female_mid = self._all_texts_by_gender("patronymic", "f") or ["АЛЕКСАНДРОВНА"]
+
+        rows: list[tuple[str, str, str, str]] = []
+        if field == "surname":
+            male_surname, female_surname = self._surname_forms(value)
+            genders = ["M", "F", "M", "F", "M"]
+            for g in genders[:count]:
+                if g == "M":
+                    rows.append((male_surname, random.choice(male_names), random.choice(male_mid), "M"))
+                else:
+                    rows.append((female_surname, random.choice(female_names), random.choice(female_mid), "F"))
+            return rows
+
+        surname_source = self._all_texts_by_gender("surname", "m") or ["ИВАНОВ"]
+        surname_source_f = self._all_texts_by_gender("surname", "f") or ["ИВАНОВА"]
+
+        if field == "name":
+            for _ in range(count):
+                g = random.choice(["M", "F"])
+                if g == "M":
+                    rows.append((random.choice(surname_source), value, random.choice(male_mid), "M"))
+                else:
+                    rows.append((random.choice(surname_source_f), value, random.choice(female_mid), "F"))
+            return rows
+
+        for _ in range(count):
+            g = random.choice(["M", "F"])
+            if g == "M":
+                rows.append((random.choice(surname_source), random.choice(male_names), value, "M"))
+            else:
+                rows.append((random.choice(surname_source_f), random.choice(female_names), value, "F"))
+        return rows
+
+    def _append_csv_rows(self, rows: list[tuple[str, str, str, str]]) -> None:
+        csv_path = self._dictionary_csv_path()
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(csv_path, "a", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            for row in rows:
+                writer.writerow(row)
+
+    def _remove_from_csv(self, field: str, value: str) -> int:
+        csv_path = self._dictionary_csv_path()
+        if not csv_path.exists():
+            return 0
+
+        index_map = {"surname": 0, "name": 1, "patronymic": 2}
+        idx = index_map[field]
+        target = value.upper()
+
+        kept: list[list[str]] = []
+        removed = 0
+        with open(csv_path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.reader(handle)
+            for row in reader:
+                if len(row) < 4:
+                    kept.append(row)
+                    continue
+                if row[idx].strip().upper() == target:
+                    removed += 1
+                    continue
+                kept.append(row)
+
+        with open(csv_path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerows(kept)
+
+        return removed
+
+    def search_dictionary(self) -> None:
+        field = self.dict_field_var.get().strip()
+        query = self.dict_search_var.get().strip().upper()
+        if not query:
+            messagebox.showwarning("Поиск", "Введите слово для поиска")
+            return
+
+        rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+        matches = [row for row in rows if str(row.get("text", "")).strip().upper() == query]
+        self.log(f"🔎 Поиск [{field}] '{query}': найдено {len(matches)} совпадений")
+
+    def add_dictionary_word(self) -> None:
+        field = self.dict_field_var.get().strip()
+        value = self.dict_add_var.get().strip().upper()
+        if len(value) < 2:
+            messagebox.showwarning("Добавление", "Введите корректное значение (минимум 2 символа)")
+            return
+
+        jsonl_path = self._dictionary_jsonl_path(field)
+        rows = self._read_jsonl(jsonl_path)
+
+        added_entries: list[dict] = []
+        if field == "surname":
+            male_surname, female_surname = self._surname_forms(value)
+            if not any(str(r.get("text", "")).upper() == male_surname for r in rows):
+                added_entries.append({"text": male_surname, "gender": "m"})
+            if not any(str(r.get("text", "")).upper() == female_surname for r in rows):
+                added_entries.append({"text": female_surname, "gender": "f"})
+        else:
+            if not any(str(r.get("text", "")).upper() == value for r in rows):
+                g = "m" if value.endswith("ИЧ") else "f" if value.endswith("НА") else None
+                added_entries.append({"text": value, "gender": g})
+
+        if added_entries:
+            rows.extend(added_entries)
+            self._write_jsonl(jsonl_path, rows)
+
+        generated_rows = self._random_fio_rows(field, value, count=5)
+        self._append_csv_rows(generated_rows)
+
+        self.log(
+            f"➕ Добавление [{field}] '{value}': добавлено в JSONL {len(added_entries)} записей, "
+            f"сгенерировано в data.csv {len(generated_rows)} строк"
+        )
+        self.dict_add_var.set("")
+
+    def remove_dictionary_word(self) -> None:
+        field = self.dict_field_var.get().strip()
+        value = self.dict_remove_var.get().strip().upper()
+        if not value:
+            messagebox.showwarning("Удаление", "Введите слово для удаления")
+            return
+
+        jsonl_path = self._dictionary_jsonl_path(field)
+        rows = self._read_jsonl(jsonl_path)
+        before = len(rows)
+        filtered = [r for r in rows if str(r.get("text", "")).strip().upper() != value]
+        removed_jsonl = before - len(filtered)
+        if removed_jsonl > 0:
+            self._write_jsonl(jsonl_path, filtered)
+
+        removed_csv = self._remove_from_csv(field, value)
+
+        self.log(
+            f"➖ Удаление [{field}] '{value}': удалено из JSONL {removed_jsonl}, "
+            f"удалено из data.csv {removed_csv} строк"
+        )
+        self.dict_remove_var.set("")
+
     def switch_user(self) -> None:
         self.show_login_view(initial=False)
 
@@ -350,6 +601,7 @@ class OCRDesktopApp:
         self.notebook.tab(self.quality_tab_index, state="normal" if is_root else "hidden")
         self.notebook.tab(self.train_tab_index, state="normal" if is_root else "hidden")
         self.notebook.tab(self.crm_tab_index, state="normal")
+        self.notebook.tab(self.dictionary_tab_index, state="normal")
 
         if not is_root:
             self.notebook.select(self.crm_tab_index)
