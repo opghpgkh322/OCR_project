@@ -62,6 +62,7 @@ class OCRDesktopApp:
 
         self.dict_field_var = tk.StringVar(value="surname")
         self.dict_search_var = tk.StringVar()
+        self.dict_search_scope_var = tk.StringVar(value="all")
         self.dict_add_var = tk.StringVar()
         self.dict_add_female_var = tk.StringVar()
         self.dict_name_gender_var = tk.StringVar(value="m")
@@ -354,71 +355,195 @@ class OCRDesktopApp:
 
     def _build_dictionary_tab(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Работа со словарём", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 8))
-        ttk.Label(
-            parent,
-            text=(
-                "Поиск/добавление/удаление словарных записей по части ФИО.\n"
-                "Добавление всегда генерирует 10 строк в dictionaries/data.csv: 5 мужских и 5 женских."
-            ),
-            style="Hint.TLabel",
-            justify=tk.LEFT,
-        ).pack(anchor="w", pady=(0, 10))
-
-        field_row = ttk.Frame(parent, style="Card.TFrame")
-        field_row.pack(anchor="w", fill=tk.X, pady=(0, 10))
-        ttk.Label(field_row, text="Часть ФИО:", style="Body.TLabel").pack(side=tk.LEFT, padx=(0, 8))
-        field_combo = ttk.Combobox(
-            field_row,
-            textvariable=self.dict_field_var,
-            values=("surname", "name", "patronymic"),
-            state="readonly",
-            width=18,
-        )
-        field_combo.pack(side=tk.LEFT)
 
         search_card = ttk.Frame(parent, style="Card.TFrame")
-        search_card.pack(anchor="w", fill=tk.X, pady=(0, 8))
-        ttk.Label(search_card, text="Поиск", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        search_card.pack(anchor="w", fill=tk.X, pady=(0, 10))
         search_row = ttk.Frame(search_card, style="Card.TFrame")
         search_row.pack(anchor="w", fill=tk.X)
-        ttk.Entry(search_row, textvariable=self.dict_search_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(search_row, textvariable=self.dict_search_var, width=38).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(
+            search_row,
+            textvariable=self.dict_search_scope_var,
+            values=("all", "surname", "name", "patronymic"),
+            state="readonly",
+            width=12,
+        ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(search_row, text="Найти", style="Action.TButton", command=self.search_dictionary).pack(side=tk.LEFT)
 
         add_card = ttk.Frame(parent, style="Card.TFrame")
-        add_card.pack(anchor="w", fill=tk.X, pady=(0, 8))
-        ttk.Label(add_card, text="Добавление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        add_row = ttk.Frame(add_card, style="Card.TFrame")
-        add_row.pack(anchor="w", fill=tk.X)
-        ttk.Label(add_row, text="Основная форма:", style="Hint.TLabel").pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Entry(add_row, textvariable=self.dict_add_var, width=26).pack(side=tk.LEFT, padx=(0, 10))
+        add_card.pack(anchor="w", fill=tk.X)
+        add_row_1 = ttk.Frame(add_card, style="Card.TFrame")
+        add_row_1.pack(anchor="w", fill=tk.X)
+        ttk.Combobox(
+            add_row_1,
+            textvariable=self.dict_field_var,
+            values=("surname", "name", "patronymic"),
+            state="readonly",
+            width=12,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(add_row_1, textvariable=self.dict_add_var, width=26).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(add_row_1, textvariable=self.dict_add_female_var, width=18).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(add_row_1, textvariable=self.dict_name_gender_var, values=("m", "f"), state="readonly", width=6).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(add_row_1, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
 
-        add_row_2 = ttk.Frame(add_card, style="Card.TFrame")
-        add_row_2.pack(anchor="w", fill=tk.X, pady=(4, 0))
-        ttk.Label(add_row_2, text="Женская форма (для фамилии/отчества):", style="Hint.TLabel").pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Entry(add_row_2, textvariable=self.dict_add_female_var, width=18).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(add_row_2, text="Род имени по умолчанию:", style="Hint.TLabel").pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Combobox(add_row_2, textvariable=self.dict_name_gender_var, values=("m", "f"), state="readonly", width=6).pack(side=tk.LEFT)
+    def _dictionary_fields(self, scope: str) -> list[str]:
+        if scope == "all":
+            return ["surname", "name", "patronymic"]
+        if scope in {"surname", "name", "patronymic"}:
+            return [scope]
+        return ["surname"]
 
-        add_row_3 = ttk.Frame(add_card, style="Card.TFrame")
-        add_row_3.pack(anchor="w", fill=tk.X, pady=(4, 0))
-        ttk.Label(
-            add_row_3,
-            text="Фамилия/отчество: заполните обе формы (для несклоняемых — одинаковые). Имя: заполните только основную форму.",
-            style="Hint.TLabel",
-            justify=tk.LEFT,
-        ).pack(anchor="w")
+    def _search_dictionary_entries(self, query: str, scope: str) -> list[dict]:
+        q = query.upper()
+        results: list[dict] = []
+        for field in self._dictionary_fields(scope):
+            rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+            for index, row in enumerate(rows):
+                text = str(row.get("text", "")).strip()
+                if not text:
+                    continue
+                if q in text.upper():
+                    results.append({
+                        "field": field,
+                        "index": index,
+                        "text": text,
+                        "gender": row.get("gender"),
+                    })
+        return results
 
-        add_action_row = ttk.Frame(add_card, style="Card.TFrame")
-        add_action_row.pack(anchor="w", fill=tk.X, pady=(6, 0))
-        ttk.Button(add_action_row, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
+    def _replace_in_csv(self, field: str, old_value: str, new_value: str) -> int:
+        csv_path = self._dictionary_csv_path()
+        if not csv_path.exists():
+            return 0
 
-        remove_card = ttk.Frame(parent, style="Card.TFrame")
-        remove_card.pack(anchor="w", fill=tk.X)
-        ttk.Label(remove_card, text="Удаление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        remove_row = ttk.Frame(remove_card, style="Card.TFrame")
-        remove_row.pack(anchor="w", fill=tk.X)
-        ttk.Entry(remove_row, textvariable=self.dict_remove_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(remove_row, text="Удалить", style="Action.TButton", command=self.remove_dictionary_word).pack(side=tk.LEFT)
+        index_map = {"surname": 0, "name": 1, "patronymic": 2}
+        idx = index_map[field]
+        old_target = old_value.upper()
+        replaced = 0
+        updated: list[list[str]] = []
+
+        with open(csv_path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.reader(handle)
+            for row in reader:
+                if len(row) >= 4 and row[idx].strip().upper() == old_target:
+                    row[idx] = new_value
+                    replaced += 1
+                updated.append(row)
+
+        with open(csv_path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerows(updated)
+        return replaced
+
+    def _open_search_results_window(self, query: str, results: list[dict]) -> None:
+        window = tk.Toplevel(self.root)
+        window.title(f"Результаты: {query}")
+        window.geometry("760x480")
+        window.configure(bg=BG_PANEL)
+
+        top = ttk.Frame(window, style="Card.TFrame", padding=10)
+        top.pack(fill=tk.BOTH, expand=True)
+
+        tree = ttk.Treeview(top, columns=("field", "text", "gender"), show="headings", height=14)
+        tree.heading("field", text="Поле")
+        tree.heading("text", text="Значение")
+        tree.heading("gender", text="Род")
+        tree.column("field", width=100, anchor=tk.W)
+        tree.column("text", width=460, anchor=tk.W)
+        tree.column("gender", width=80, anchor=tk.CENTER)
+        tree.pack(fill=tk.BOTH, expand=True)
+
+        form = ttk.Frame(top, style="Card.TFrame")
+        form.pack(fill=tk.X, pady=(8, 0))
+        edit_text_var = tk.StringVar()
+        edit_gender_var = tk.StringVar()
+        ttk.Entry(form, textvariable=edit_text_var, width=42).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(form, textvariable=edit_gender_var, values=("", "m", "f"), state="readonly", width=6).pack(side=tk.LEFT, padx=(0, 8))
+
+        row_map: dict[str, dict] = {}
+        for idx, item in enumerate(results):
+            iid = f"i{idx}"
+            row_map[iid] = item
+            gender = item.get("gender") if item.get("gender") is not None else ""
+            tree.insert("", tk.END, iid=iid, values=(item["field"], item["text"], gender))
+
+        def on_select(_event: tk.Event | None = None) -> None:
+            selected = tree.selection()
+            if len(selected) != 1:
+                return
+            item = row_map[selected[0]]
+            edit_text_var.set(item["text"])
+            edit_gender_var.set(item.get("gender") or "")
+
+        def save_selected() -> None:
+            selected = tree.selection()
+            if len(selected) != 1:
+                messagebox.showwarning("Редактирование", "Выберите одну строку")
+                return
+
+            iid = selected[0]
+            item = row_map[iid]
+            new_text = edit_text_var.get().strip().upper()
+            if len(new_text) < 2:
+                messagebox.showwarning("Редактирование", "Введите корректное значение")
+                return
+
+            new_gender = edit_gender_var.get().strip() or None
+            field = item["field"]
+            rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+            if item["index"] >= len(rows):
+                messagebox.showerror("Редактирование", "Строка уже изменилась. Выполните поиск заново")
+                return
+
+            old_text = str(rows[item["index"]].get("text", "")).strip()
+            rows[item["index"]]["text"] = new_text
+            rows[item["index"]]["gender"] = new_gender
+            self._write_jsonl(self._dictionary_jsonl_path(field), rows)
+            replaced = self._replace_in_csv(field, old_text, new_text)
+
+            item["text"] = new_text
+            item["gender"] = new_gender
+            tree.item(iid, values=(field, new_text, new_gender or ""))
+            self.log(f"✏️ [{field}] '{old_text}' -> '{new_text}', CSV: {replaced}")
+
+        def delete_selected() -> None:
+            selected = list(tree.selection())
+            if not selected:
+                messagebox.showwarning("Удаление", "Выберите строки")
+                return
+
+            groups: dict[str, list[tuple[int, str]]] = {}
+            for iid in selected:
+                item = row_map[iid]
+                groups.setdefault(item["field"], []).append((item["index"], item["text"]))
+
+            removed_csv_total = 0
+            removed_jsonl_total = 0
+            for field, payload in groups.items():
+                rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+                indexes = sorted({index for index, _ in payload}, reverse=True)
+                for index in indexes:
+                    if 0 <= index < len(rows):
+                        rows.pop(index)
+                        removed_jsonl_total += 1
+                self._write_jsonl(self._dictionary_jsonl_path(field), rows)
+
+                for _, text_value in payload:
+                    removed_csv_total += self._remove_from_csv(field, text_value)
+
+            for iid in selected:
+                tree.delete(iid)
+                row_map.pop(iid, None)
+
+            self.log(f"🗑️ Удалено из JSONL: {removed_jsonl_total}, из CSV: {removed_csv_total}")
+
+        tree.bind("<<TreeviewSelect>>", on_select)
+
+        actions = ttk.Frame(top, style="Card.TFrame")
+        actions.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(actions, text="Сохранить", style="Action.TButton", command=save_selected).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(actions, text="Удалить", style="Action.TButton", command=delete_selected).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(actions, text="Закрыть", style="Action.TButton", command=window.destroy).pack(side=tk.RIGHT)
 
     def _dictionary_jsonl_path(self, field: str) -> Path:
         dict_dir = self.repo_root / "dictionaries"
@@ -537,15 +662,18 @@ class OCRDesktopApp:
         return removed
 
     def search_dictionary(self) -> None:
-        field = self.dict_field_var.get().strip()
-        query = self.dict_search_var.get().strip().upper()
+        query = self.dict_search_var.get().strip()
         if not query:
-            messagebox.showwarning("Поиск", "Введите слово для поиска")
+            messagebox.showwarning("Поиск", "Введите запрос")
             return
 
-        rows = self._read_jsonl(self._dictionary_jsonl_path(field))
-        matches = [row for row in rows if str(row.get("text", "")).strip().upper() == query]
-        self.log(f"🔎 Поиск [{field}] '{query}': найдено {len(matches)} совпадений")
+        scope = self.dict_search_scope_var.get().strip()
+        matches = self._search_dictionary_entries(query, scope)
+        self.log(f"🔎 Поиск '{query}' ({scope}): {len(matches)}")
+        if not matches:
+            messagebox.showinfo("Поиск", "Совпадений не найдено")
+            return
+        self._open_search_results_window(query, matches)
 
     def add_dictionary_word(self) -> None:
         field = self.dict_field_var.get().strip()
