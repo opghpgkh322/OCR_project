@@ -176,9 +176,11 @@ class OCRDesktopApp:
 
     def _load_logo_image(self, logo_path: Path, target_height: int = 128) -> tk.PhotoImage | None:
         try:
-            image = tk.PhotoImage(file=str(logo_path))
-        except Exception as exc:  # noqa: BLE001
-            print(f"[logo] failed to load {logo_path}: {exc}")
+            if logo_path.suffix.lower() == ".svg":
+                image = tk.PhotoImage(file=str(logo_path), format="svg")
+            else:
+                image = tk.PhotoImage(file=str(logo_path))
+        except Exception:  # noqa: BLE001
             return None
 
         height = max(1, image.height())
@@ -196,8 +198,13 @@ class OCRDesktopApp:
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         header.grid_columnconfigure(2, weight=1)
 
-        logo_path = self.repo_root / "assets" / "Sequoia_logo.svg"
-        self.logo_photo = self._load_logo_image(logo_path) if logo_path.exists() else None
+        svg_logo_path = self.repo_root / "assets" / "Sequoia_logo.svg"
+        png_logo_path = self.repo_root / "assets" / "Sequoia_logo.png"
+        self.logo_photo = None
+        if png_logo_path.exists():
+            self.logo_photo = self._load_logo_image(png_logo_path)
+        if self.logo_photo is None and svg_logo_path.exists():
+            self.logo_photo = self._load_logo_image(svg_logo_path)
 
         if self.logo_photo is not None:
             logo_label = tk.Label(header, image=self.logo_photo, bg=BG_MAIN, bd=0, highlightthickness=0)
