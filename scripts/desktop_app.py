@@ -1,4 +1,5 @@
 import argparse
+import base64
 import csv
 import json
 import os
@@ -9,6 +10,11 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
+
+try:
+    from cairosvg import svg2png
+except Exception:  # noqa: BLE001
+    svg2png = None
 
 BG_MAIN = "#F9FFF6"
 BG_PANEL = "#FFFFFF"
@@ -59,10 +65,14 @@ class OCRDesktopApp:
         self.logo_photo: tk.PhotoImage | None = None
         self.log_text: tk.Text | None = None
         self._login_password_var = tk.StringVar()
+        self._logo_warning_logged = False
 
         self.dict_field_var = tk.StringVar(value="surname")
         self.dict_search_var = tk.StringVar()
+        self.dict_search_scope_var = tk.StringVar(value="all")
         self.dict_add_var = tk.StringVar()
+        self.dict_add_female_var = tk.StringVar()
+        self.dict_name_gender_var = tk.StringVar(value="m")
         self.dict_remove_var = tk.StringVar()
 
         self._configure_styles()
@@ -172,29 +182,54 @@ class OCRDesktopApp:
         self._build_main_panel(root_frame)
 
     def _load_logo_image(self, logo_path: Path, target_height: int = 128) -> tk.PhotoImage | None:
+        def _scale(image: tk.PhotoImage) -> tk.PhotoImage:
+            height = max(1, image.height())
+            if height > target_height:
+                factor = max(1, int(round(height / target_height)))
+                return image.subsample(factor, factor)
+            if height < target_height:
+                factor = max(1, int(round(target_height / height)))
+                return image.zoom(factor, factor)
+            return image
+
         try:
-            image = tk.PhotoImage(file=str(logo_path))
-        except Exception as exc:  # noqa: BLE001
-            print(f"[logo] failed to load {logo_path}: {exc}")
-            return None
+            if logo_path.suffix.lower() == ".svg":
+                image = tk.PhotoImage(file=str(logo_path), format="svg")
+            else:
+                image = tk.PhotoImage(file=str(logo_path))
+            return _scale(image)
+        except Exception:  # noqa: BLE001
+            if logo_path.suffix.lower() != ".svg":
+                return None
 
-        height = max(1, image.height())
-        if height > target_height:
-            factor = max(1, int(round(height / target_height)))
-            image = image.subsample(factor, factor)
-        elif height < target_height:
-            factor = max(1, int(round(target_height / height)))
-            image = image.zoom(factor, factor)
+        if svg2png is not None:
+            try:
+                png_bytes = svg2png(url=str(logo_path))
+                image = tk.PhotoImage(data=base64.b64encode(png_bytes).decode("ascii"))
+                return _scale(image)
+            except Exception:  # noqa: BLE001
+                pass
 
-        return image
+        if not self._logo_warning_logged:
+            print(
+                "[logo] SVG не поддерживается текущим Tk. "
+                "Установите 'cairosvg' или добавьте assets/Sequoia_logo.png"
+            )
+            self._logo_warning_logged = True
+        return None
 
     def _build_header(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent, style="Root.TFrame")
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         header.grid_columnconfigure(2, weight=1)
 
-        logo_path = self.repo_root / "assets" / "Sequoia_logo.svg"
-        self.logo_photo = self._load_logo_image(logo_path) if logo_path.exists() else None
+        svg_logo_path = self.repo_root / "assets" / "Sequoia_logo.svg"
+        png_logo_path = self.repo_root / "assets" / "Sequoia_logo.png"
+        self.logo_photo = None
+        if png_logo_path.exists():
+            self.logo_photo = self._load_logo_image(png_logo_path)
+        if self.logo_photo is None and svg_logo_path.exists():
+            self.logo_photo = self._load_logo_image(svg_logo_path)
 
         if self.logo_photo is not None:
             logo_label = tk.Label(header, image=self.logo_photo, bg=BG_MAIN, bd=0, highlightthickness=0)
@@ -352,48 +387,195 @@ class OCRDesktopApp:
 
     def _build_dictionary_tab(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Работа со словарём", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 8))
-        ttk.Label(
-            parent,
-            text="Поиск/добавление/удаление словарных записей по части ФИО.",
-            style="Hint.TLabel",
-            justify=tk.LEFT,
-        ).pack(anchor="w", pady=(0, 10))
-
-        field_row = ttk.Frame(parent, style="Card.TFrame")
-        field_row.pack(anchor="w", fill=tk.X, pady=(0, 10))
-        ttk.Label(field_row, text="Часть ФИО:", style="Body.TLabel").pack(side=tk.LEFT, padx=(0, 8))
-        field_combo = ttk.Combobox(
-            field_row,
-            textvariable=self.dict_field_var,
-            values=("surname", "name", "patronymic"),
-            state="readonly",
-            width=18,
-        )
-        field_combo.pack(side=tk.LEFT)
 
         search_card = ttk.Frame(parent, style="Card.TFrame")
-        search_card.pack(anchor="w", fill=tk.X, pady=(0, 8))
-        ttk.Label(search_card, text="Поиск", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        search_card.pack(anchor="w", fill=tk.X, pady=(0, 10))
         search_row = ttk.Frame(search_card, style="Card.TFrame")
         search_row.pack(anchor="w", fill=tk.X)
-        ttk.Entry(search_row, textvariable=self.dict_search_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(search_row, textvariable=self.dict_search_var, width=38).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(
+            search_row,
+            textvariable=self.dict_search_scope_var,
+            values=("all", "surname", "name", "patronymic"),
+            state="readonly",
+            width=12,
+        ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(search_row, text="Найти", style="Action.TButton", command=self.search_dictionary).pack(side=tk.LEFT)
 
         add_card = ttk.Frame(parent, style="Card.TFrame")
-        add_card.pack(anchor="w", fill=tk.X, pady=(0, 8))
-        ttk.Label(add_card, text="Добавление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        add_row = ttk.Frame(add_card, style="Card.TFrame")
-        add_row.pack(anchor="w", fill=tk.X)
-        ttk.Entry(add_row, textvariable=self.dict_add_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(add_row, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
+        add_card.pack(anchor="w", fill=tk.X)
+        add_row_1 = ttk.Frame(add_card, style="Card.TFrame")
+        add_row_1.pack(anchor="w", fill=tk.X)
+        ttk.Combobox(
+            add_row_1,
+            textvariable=self.dict_field_var,
+            values=("surname", "name", "patronymic"),
+            state="readonly",
+            width=12,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(add_row_1, textvariable=self.dict_add_var, width=26).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Entry(add_row_1, textvariable=self.dict_add_female_var, width=18).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(add_row_1, textvariable=self.dict_name_gender_var, values=("m", "f"), state="readonly", width=6).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(add_row_1, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
 
-        remove_card = ttk.Frame(parent, style="Card.TFrame")
-        remove_card.pack(anchor="w", fill=tk.X)
-        ttk.Label(remove_card, text="Удаление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        remove_row = ttk.Frame(remove_card, style="Card.TFrame")
-        remove_row.pack(anchor="w", fill=tk.X)
-        ttk.Entry(remove_row, textvariable=self.dict_remove_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(remove_row, text="Удалить", style="Action.TButton", command=self.remove_dictionary_word).pack(side=tk.LEFT)
+    def _dictionary_fields(self, scope: str) -> list[str]:
+        if scope == "all":
+            return ["surname", "name", "patronymic"]
+        if scope in {"surname", "name", "patronymic"}:
+            return [scope]
+        return ["surname"]
+
+    def _search_dictionary_entries(self, query: str, scope: str) -> list[dict]:
+        q = query.upper()
+        results: list[dict] = []
+        for field in self._dictionary_fields(scope):
+            rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+            for index, row in enumerate(rows):
+                text = str(row.get("text", "")).strip()
+                if not text:
+                    continue
+                if q in text.upper():
+                    results.append({
+                        "field": field,
+                        "index": index,
+                        "text": text,
+                        "gender": row.get("gender"),
+                    })
+        return results
+
+    def _replace_in_csv(self, field: str, old_value: str, new_value: str) -> int:
+        csv_path = self._dictionary_csv_path()
+        if not csv_path.exists():
+            return 0
+
+        index_map = {"surname": 0, "name": 1, "patronymic": 2}
+        idx = index_map[field]
+        old_target = old_value.upper()
+        replaced = 0
+        updated: list[list[str]] = []
+
+        with open(csv_path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.reader(handle)
+            for row in reader:
+                if len(row) >= 4 and row[idx].strip().upper() == old_target:
+                    row[idx] = new_value
+                    replaced += 1
+                updated.append(row)
+
+        with open(csv_path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerows(updated)
+        return replaced
+
+    def _open_search_results_window(self, query: str, results: list[dict]) -> None:
+        window = tk.Toplevel(self.root)
+        window.title(f"Результаты: {query}")
+        window.geometry("760x480")
+        window.configure(bg=BG_PANEL)
+
+        top = ttk.Frame(window, style="Card.TFrame", padding=10)
+        top.pack(fill=tk.BOTH, expand=True)
+
+        tree = ttk.Treeview(top, columns=("field", "text", "gender"), show="headings", height=14)
+        tree.heading("field", text="Поле")
+        tree.heading("text", text="Значение")
+        tree.heading("gender", text="Род")
+        tree.column("field", width=100, anchor=tk.W)
+        tree.column("text", width=460, anchor=tk.W)
+        tree.column("gender", width=80, anchor=tk.CENTER)
+        tree.pack(fill=tk.BOTH, expand=True)
+
+        form = ttk.Frame(top, style="Card.TFrame")
+        form.pack(fill=tk.X, pady=(8, 0))
+        edit_text_var = tk.StringVar()
+        edit_gender_var = tk.StringVar()
+        ttk.Entry(form, textvariable=edit_text_var, width=42).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(form, textvariable=edit_gender_var, values=("", "m", "f"), state="readonly", width=6).pack(side=tk.LEFT, padx=(0, 8))
+
+        row_map: dict[str, dict] = {}
+        for idx, item in enumerate(results):
+            iid = f"i{idx}"
+            row_map[iid] = item
+            gender = item.get("gender") if item.get("gender") is not None else ""
+            tree.insert("", tk.END, iid=iid, values=(item["field"], item["text"], gender))
+
+        def on_select(_event: tk.Event | None = None) -> None:
+            selected = tree.selection()
+            if len(selected) != 1:
+                return
+            item = row_map[selected[0]]
+            edit_text_var.set(item["text"])
+            edit_gender_var.set(item.get("gender") or "")
+
+        def save_selected() -> None:
+            selected = tree.selection()
+            if len(selected) != 1:
+                messagebox.showwarning("Редактирование", "Выберите одну строку")
+                return
+
+            iid = selected[0]
+            item = row_map[iid]
+            new_text = edit_text_var.get().strip().upper()
+            if len(new_text) < 2:
+                messagebox.showwarning("Редактирование", "Введите корректное значение")
+                return
+
+            new_gender = edit_gender_var.get().strip() or None
+            field = item["field"]
+            rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+            if item["index"] >= len(rows):
+                messagebox.showerror("Редактирование", "Строка уже изменилась. Выполните поиск заново")
+                return
+
+            old_text = str(rows[item["index"]].get("text", "")).strip()
+            rows[item["index"]]["text"] = new_text
+            rows[item["index"]]["gender"] = new_gender
+            self._write_jsonl(self._dictionary_jsonl_path(field), rows)
+            replaced = self._replace_in_csv(field, old_text, new_text)
+
+            item["text"] = new_text
+            item["gender"] = new_gender
+            tree.item(iid, values=(field, new_text, new_gender or ""))
+            self.log(f"✏️ [{field}] '{old_text}' -> '{new_text}', CSV: {replaced}")
+
+        def delete_selected() -> None:
+            selected = list(tree.selection())
+            if not selected:
+                messagebox.showwarning("Удаление", "Выберите строки")
+                return
+
+            groups: dict[str, list[tuple[int, str]]] = {}
+            for iid in selected:
+                item = row_map[iid]
+                groups.setdefault(item["field"], []).append((item["index"], item["text"]))
+
+            removed_csv_total = 0
+            removed_jsonl_total = 0
+            for field, payload in groups.items():
+                rows = self._read_jsonl(self._dictionary_jsonl_path(field))
+                indexes = sorted({index for index, _ in payload}, reverse=True)
+                for index in indexes:
+                    if 0 <= index < len(rows):
+                        rows.pop(index)
+                        removed_jsonl_total += 1
+                self._write_jsonl(self._dictionary_jsonl_path(field), rows)
+
+                for _, text_value in payload:
+                    removed_csv_total += self._remove_from_csv(field, text_value)
+
+            for iid in selected:
+                tree.delete(iid)
+                row_map.pop(iid, None)
+
+            self.log(f"🗑️ Удалено из JSONL: {removed_jsonl_total}, из CSV: {removed_csv_total}")
+
+        tree.bind("<<TreeviewSelect>>", on_select)
+
+        actions = ttk.Frame(top, style="Card.TFrame")
+        actions.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(actions, text="Сохранить", style="Action.TButton", command=save_selected).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(actions, text="Удалить", style="Action.TButton", command=delete_selected).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(actions, text="Закрыть", style="Action.TButton", command=window.destroy).pack(side=tk.RIGHT)
 
     def _dictionary_jsonl_path(self, field: str) -> Path:
         dict_dir = self.repo_root / "dictionaries"
@@ -439,47 +621,40 @@ class OCRDesktopApp:
                 values.append(text)
         return values
 
-    def _surname_forms(self, surname: str) -> tuple[str, str]:
-        base = surname.strip()
-        if base.endswith("А") and len(base) > 1:
-            return base[:-1], base
-        return base, f"{base}А"
+    def _word_exists(self, rows: list[dict], word: str, gender: str | None) -> bool:
+        for row in rows:
+            text = str(row.get("text", "")).strip().upper()
+            row_gender = row.get("gender")
+            if text == word and row_gender == gender:
+                return True
+            if text == word and row_gender is None and gender is None:
+                return True
+        return False
 
-    def _random_fio_rows(self, field: str, value: str, count: int = 5) -> list[tuple[str, str, str, str]]:
+    def _fixed_gender_rows(self, field: str, male_value: str, female_value: str) -> list[tuple[str, str, str, str]]:
         male_names = self._all_texts_by_gender("name", "m") or ["АЛЕКСАНДР"]
         female_names = self._all_texts_by_gender("name", "f") or ["АННА"]
         male_mid = self._all_texts_by_gender("patronymic", "m") or ["АЛЕКСАНДРОВИЧ"]
         female_mid = self._all_texts_by_gender("patronymic", "f") or ["АЛЕКСАНДРОВНА"]
-
-        rows: list[tuple[str, str, str, str]] = []
-        if field == "surname":
-            male_surname, female_surname = self._surname_forms(value)
-            genders = ["M", "F", "M", "F", "M"]
-            for g in genders[:count]:
-                if g == "M":
-                    rows.append((male_surname, random.choice(male_names), random.choice(male_mid), "M"))
-                else:
-                    rows.append((female_surname, random.choice(female_names), random.choice(female_mid), "F"))
-            return rows
-
         surname_source = self._all_texts_by_gender("surname", "m") or ["ИВАНОВ"]
         surname_source_f = self._all_texts_by_gender("surname", "f") or ["ИВАНОВА"]
 
-        if field == "name":
-            for _ in range(count):
-                g = random.choice(["M", "F"])
-                if g == "M":
-                    rows.append((random.choice(surname_source), value, random.choice(male_mid), "M"))
-                else:
-                    rows.append((random.choice(surname_source_f), value, random.choice(female_mid), "F"))
-            return rows
-
-        for _ in range(count):
-            g = random.choice(["M", "F"])
-            if g == "M":
-                rows.append((random.choice(surname_source), random.choice(male_names), value, "M"))
+        rows: list[tuple[str, str, str, str]] = []
+        for _ in range(5):
+            if field == "surname":
+                rows.append((male_value, random.choice(male_names), random.choice(male_mid), "M"))
+            elif field == "name":
+                rows.append((random.choice(surname_source), male_value, random.choice(male_mid), "M"))
             else:
-                rows.append((random.choice(surname_source_f), random.choice(female_names), value, "F"))
+                rows.append((random.choice(surname_source), random.choice(male_names), male_value, "M"))
+
+        for _ in range(5):
+            if field == "surname":
+                rows.append((female_value, random.choice(female_names), random.choice(female_mid), "F"))
+            elif field == "name":
+                rows.append((random.choice(surname_source_f), female_value, random.choice(female_mid), "F"))
+            else:
+                rows.append((random.choice(surname_source_f), random.choice(female_names), female_value, "F"))
         return rows
 
     def _append_csv_rows(self, rows: list[tuple[str, str, str, str]]) -> None:
@@ -519,50 +694,66 @@ class OCRDesktopApp:
         return removed
 
     def search_dictionary(self) -> None:
-        field = self.dict_field_var.get().strip()
-        query = self.dict_search_var.get().strip().upper()
+        query = self.dict_search_var.get().strip()
         if not query:
-            messagebox.showwarning("Поиск", "Введите слово для поиска")
+            messagebox.showwarning("Поиск", "Введите запрос")
             return
 
-        rows = self._read_jsonl(self._dictionary_jsonl_path(field))
-        matches = [row for row in rows if str(row.get("text", "")).strip().upper() == query]
-        self.log(f"🔎 Поиск [{field}] '{query}': найдено {len(matches)} совпадений")
+        scope = self.dict_search_scope_var.get().strip()
+        matches = self._search_dictionary_entries(query, scope)
+        self.log(f"🔎 Поиск '{query}' ({scope}): {len(matches)}")
+        if not matches:
+            messagebox.showinfo("Поиск", "Совпадений не найдено")
+            return
+        self._open_search_results_window(query, matches)
 
     def add_dictionary_word(self) -> None:
         field = self.dict_field_var.get().strip()
-        value = self.dict_add_var.get().strip().upper()
-        if len(value) < 2:
-            messagebox.showwarning("Добавление", "Введите корректное значение (минимум 2 символа)")
+        male_value = self.dict_add_var.get().strip().upper()
+        female_value = self.dict_add_female_var.get().strip().upper()
+        default_name_gender = self.dict_name_gender_var.get().strip()
+
+        if len(male_value) < 2:
+            messagebox.showwarning("Добавление", "Введите основную форму (минимум 2 символа)")
             return
+
+        if field in {"surname", "patronymic"} and len(female_value) < 2:
+            messagebox.showwarning("Добавление", "Для фамилии/отчества заполните мужскую и женскую форму")
+            return
+
+        if field == "name":
+            female_value = male_value
+            if default_name_gender not in {"m", "f"}:
+                messagebox.showwarning("Добавление", "Для имени выберите род по умолчанию: m или f")
+                return
 
         jsonl_path = self._dictionary_jsonl_path(field)
         rows = self._read_jsonl(jsonl_path)
 
         added_entries: list[dict] = []
-        if field == "surname":
-            male_surname, female_surname = self._surname_forms(value)
-            if not any(str(r.get("text", "")).upper() == male_surname for r in rows):
-                added_entries.append({"text": male_surname, "gender": "m"})
-            if not any(str(r.get("text", "")).upper() == female_surname for r in rows):
-                added_entries.append({"text": female_surname, "gender": "f"})
+        if field in {"surname", "patronymic"}:
+            if not self._word_exists(rows, male_value, "m"):
+                added_entries.append({"text": male_value, "gender": "m"})
+            if not self._word_exists(rows, female_value, "f"):
+                added_entries.append({"text": female_value, "gender": "f"})
         else:
-            if not any(str(r.get("text", "")).upper() == value for r in rows):
-                g = "m" if value.endswith("ИЧ") else "f" if value.endswith("НА") else None
-                added_entries.append({"text": value, "gender": g})
+            if not self._word_exists(rows, male_value, default_name_gender):
+                added_entries.append({"text": male_value, "gender": default_name_gender})
 
         if added_entries:
             rows.extend(added_entries)
             self._write_jsonl(jsonl_path, rows)
 
-        generated_rows = self._random_fio_rows(field, value, count=5)
+        generated_rows = self._fixed_gender_rows(field, male_value, female_value)
         self._append_csv_rows(generated_rows)
 
         self.log(
-            f"➕ Добавление [{field}] '{value}': добавлено в JSONL {len(added_entries)} записей, "
-            f"сгенерировано в data.csv {len(generated_rows)} строк"
+            f"➕ Добавление [{field}] '{male_value}'"
+            f"{' / ' + female_value if field in {'surname', 'patronymic'} else ''}: "
+            f"добавлено в JSONL {len(added_entries)} записей, сгенерировано в data.csv {len(generated_rows)} строк (5M/5F)"
         )
         self.dict_add_var.set("")
+        self.dict_add_female_var.set("")
 
     def remove_dictionary_word(self) -> None:
         field = self.dict_field_var.get().strip()
