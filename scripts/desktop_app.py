@@ -1,4 +1,5 @@
 import argparse
+import base64
 import csv
 import json
 import os
@@ -9,6 +10,11 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
+
+try:
+    from cairosvg import svg2png
+except Exception:  # noqa: BLE001
+    svg2png = None
 
 BG_MAIN = "#F9FFF6"
 BG_PANEL = "#FFFFFF"
@@ -59,6 +65,7 @@ class OCRDesktopApp:
         self.logo_photo: tk.PhotoImage | None = None
         self.log_text: tk.Text | None = None
         self._login_password_var = tk.StringVar()
+        self._logo_warning_logged = False
 
         self.dict_field_var = tk.StringVar(value="surname")
         self.dict_search_var = tk.StringVar()
@@ -175,23 +182,41 @@ class OCRDesktopApp:
         self._build_main_panel(root_frame)
 
     def _load_logo_image(self, logo_path: Path, target_height: int = 128) -> tk.PhotoImage | None:
+        def _scale(image: tk.PhotoImage) -> tk.PhotoImage:
+            height = max(1, image.height())
+            if height > target_height:
+                factor = max(1, int(round(height / target_height)))
+                return image.subsample(factor, factor)
+            if height < target_height:
+                factor = max(1, int(round(target_height / height)))
+                return image.zoom(factor, factor)
+            return image
+
         try:
             if logo_path.suffix.lower() == ".svg":
                 image = tk.PhotoImage(file=str(logo_path), format="svg")
             else:
                 image = tk.PhotoImage(file=str(logo_path))
+            return _scale(image)
         except Exception:  # noqa: BLE001
-            return None
+            if logo_path.suffix.lower() != ".svg":
+                return None
 
-        height = max(1, image.height())
-        if height > target_height:
-            factor = max(1, int(round(height / target_height)))
-            image = image.subsample(factor, factor)
-        elif height < target_height:
-            factor = max(1, int(round(target_height / height)))
-            image = image.zoom(factor, factor)
+        if svg2png is not None:
+            try:
+                png_bytes = svg2png(url=str(logo_path))
+                image = tk.PhotoImage(data=base64.b64encode(png_bytes).decode("ascii"))
+                return _scale(image)
+            except Exception:  # noqa: BLE001
+                pass
 
-        return image
+        if not self._logo_warning_logged:
+            print(
+                "[logo] SVG не поддерживается текущим Tk. "
+                "Установите 'cairosvg' или добавьте assets/Sequoia_logo.png"
+            )
+            self._logo_warning_logged = True
+        return None
 
     def _build_header(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent, style="Root.TFrame")
