@@ -63,6 +63,8 @@ class OCRDesktopApp:
         self.dict_field_var = tk.StringVar(value="surname")
         self.dict_search_var = tk.StringVar()
         self.dict_add_var = tk.StringVar()
+        self.dict_add_female_var = tk.StringVar()
+        self.dict_name_gender_var = tk.StringVar(value="m")
         self.dict_remove_var = tk.StringVar()
 
         self._configure_styles()
@@ -354,7 +356,10 @@ class OCRDesktopApp:
         ttk.Label(parent, text="Работа со словарём", style="SectionTitle.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(
             parent,
-            text="Поиск/добавление/удаление словарных записей по части ФИО.",
+            text=(
+                "Поиск/добавление/удаление словарных записей по части ФИО.\n"
+                "Добавление всегда генерирует 10 строк в dictionaries/data.csv: 5 мужских и 5 женских."
+            ),
             style="Hint.TLabel",
             justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 10))
@@ -384,8 +389,28 @@ class OCRDesktopApp:
         ttk.Label(add_card, text="Добавление", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
         add_row = ttk.Frame(add_card, style="Card.TFrame")
         add_row.pack(anchor="w", fill=tk.X)
-        ttk.Entry(add_row, textvariable=self.dict_add_var, width=34).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(add_row, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
+        ttk.Label(add_row, text="Основная форма:", style="Hint.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(add_row, textvariable=self.dict_add_var, width=26).pack(side=tk.LEFT, padx=(0, 10))
+
+        add_row_2 = ttk.Frame(add_card, style="Card.TFrame")
+        add_row_2.pack(anchor="w", fill=tk.X, pady=(4, 0))
+        ttk.Label(add_row_2, text="Женская форма (для фамилии/отчества):", style="Hint.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(add_row_2, textvariable=self.dict_add_female_var, width=18).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(add_row_2, text="Род имени по умолчанию:", style="Hint.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Combobox(add_row_2, textvariable=self.dict_name_gender_var, values=("m", "f"), state="readonly", width=6).pack(side=tk.LEFT)
+
+        add_row_3 = ttk.Frame(add_card, style="Card.TFrame")
+        add_row_3.pack(anchor="w", fill=tk.X, pady=(4, 0))
+        ttk.Label(
+            add_row_3,
+            text="Фамилия/отчество: заполните обе формы (для несклоняемых — одинаковые). Имя: заполните только основную форму.",
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).pack(anchor="w")
+
+        add_action_row = ttk.Frame(add_card, style="Card.TFrame")
+        add_action_row.pack(anchor="w", fill=tk.X, pady=(6, 0))
+        ttk.Button(add_action_row, text="Добавить", style="Action.TButton", command=self.add_dictionary_word).pack(side=tk.LEFT)
 
         remove_card = ttk.Frame(parent, style="Card.TFrame")
         remove_card.pack(anchor="w", fill=tk.X)
@@ -439,47 +464,40 @@ class OCRDesktopApp:
                 values.append(text)
         return values
 
-    def _surname_forms(self, surname: str) -> tuple[str, str]:
-        base = surname.strip()
-        if base.endswith("А") and len(base) > 1:
-            return base[:-1], base
-        return base, f"{base}А"
+    def _word_exists(self, rows: list[dict], word: str, gender: str | None) -> bool:
+        for row in rows:
+            text = str(row.get("text", "")).strip().upper()
+            row_gender = row.get("gender")
+            if text == word and row_gender == gender:
+                return True
+            if text == word and row_gender is None and gender is None:
+                return True
+        return False
 
-    def _random_fio_rows(self, field: str, value: str, count: int = 5) -> list[tuple[str, str, str, str]]:
+    def _fixed_gender_rows(self, field: str, male_value: str, female_value: str) -> list[tuple[str, str, str, str]]:
         male_names = self._all_texts_by_gender("name", "m") or ["АЛЕКСАНДР"]
         female_names = self._all_texts_by_gender("name", "f") or ["АННА"]
         male_mid = self._all_texts_by_gender("patronymic", "m") or ["АЛЕКСАНДРОВИЧ"]
         female_mid = self._all_texts_by_gender("patronymic", "f") or ["АЛЕКСАНДРОВНА"]
-
-        rows: list[tuple[str, str, str, str]] = []
-        if field == "surname":
-            male_surname, female_surname = self._surname_forms(value)
-            genders = ["M", "F", "M", "F", "M"]
-            for g in genders[:count]:
-                if g == "M":
-                    rows.append((male_surname, random.choice(male_names), random.choice(male_mid), "M"))
-                else:
-                    rows.append((female_surname, random.choice(female_names), random.choice(female_mid), "F"))
-            return rows
-
         surname_source = self._all_texts_by_gender("surname", "m") or ["ИВАНОВ"]
         surname_source_f = self._all_texts_by_gender("surname", "f") or ["ИВАНОВА"]
 
-        if field == "name":
-            for _ in range(count):
-                g = random.choice(["M", "F"])
-                if g == "M":
-                    rows.append((random.choice(surname_source), value, random.choice(male_mid), "M"))
-                else:
-                    rows.append((random.choice(surname_source_f), value, random.choice(female_mid), "F"))
-            return rows
-
-        for _ in range(count):
-            g = random.choice(["M", "F"])
-            if g == "M":
-                rows.append((random.choice(surname_source), random.choice(male_names), value, "M"))
+        rows: list[tuple[str, str, str, str]] = []
+        for _ in range(5):
+            if field == "surname":
+                rows.append((male_value, random.choice(male_names), random.choice(male_mid), "M"))
+            elif field == "name":
+                rows.append((random.choice(surname_source), male_value, random.choice(male_mid), "M"))
             else:
-                rows.append((random.choice(surname_source_f), random.choice(female_names), value, "F"))
+                rows.append((random.choice(surname_source), random.choice(male_names), male_value, "M"))
+
+        for _ in range(5):
+            if field == "surname":
+                rows.append((female_value, random.choice(female_names), random.choice(female_mid), "F"))
+            elif field == "name":
+                rows.append((random.choice(surname_source_f), female_value, random.choice(female_mid), "F"))
+            else:
+                rows.append((random.choice(surname_source_f), random.choice(female_names), female_value, "F"))
         return rows
 
     def _append_csv_rows(self, rows: list[tuple[str, str, str, str]]) -> None:
@@ -531,38 +549,51 @@ class OCRDesktopApp:
 
     def add_dictionary_word(self) -> None:
         field = self.dict_field_var.get().strip()
-        value = self.dict_add_var.get().strip().upper()
-        if len(value) < 2:
-            messagebox.showwarning("Добавление", "Введите корректное значение (минимум 2 символа)")
+        male_value = self.dict_add_var.get().strip().upper()
+        female_value = self.dict_add_female_var.get().strip().upper()
+        default_name_gender = self.dict_name_gender_var.get().strip()
+
+        if len(male_value) < 2:
+            messagebox.showwarning("Добавление", "Введите основную форму (минимум 2 символа)")
             return
+
+        if field in {"surname", "patronymic"} and len(female_value) < 2:
+            messagebox.showwarning("Добавление", "Для фамилии/отчества заполните мужскую и женскую форму")
+            return
+
+        if field == "name":
+            female_value = male_value
+            if default_name_gender not in {"m", "f"}:
+                messagebox.showwarning("Добавление", "Для имени выберите род по умолчанию: m или f")
+                return
 
         jsonl_path = self._dictionary_jsonl_path(field)
         rows = self._read_jsonl(jsonl_path)
 
         added_entries: list[dict] = []
-        if field == "surname":
-            male_surname, female_surname = self._surname_forms(value)
-            if not any(str(r.get("text", "")).upper() == male_surname for r in rows):
-                added_entries.append({"text": male_surname, "gender": "m"})
-            if not any(str(r.get("text", "")).upper() == female_surname for r in rows):
-                added_entries.append({"text": female_surname, "gender": "f"})
+        if field in {"surname", "patronymic"}:
+            if not self._word_exists(rows, male_value, "m"):
+                added_entries.append({"text": male_value, "gender": "m"})
+            if not self._word_exists(rows, female_value, "f"):
+                added_entries.append({"text": female_value, "gender": "f"})
         else:
-            if not any(str(r.get("text", "")).upper() == value for r in rows):
-                g = "m" if value.endswith("ИЧ") else "f" if value.endswith("НА") else None
-                added_entries.append({"text": value, "gender": g})
+            if not self._word_exists(rows, male_value, default_name_gender):
+                added_entries.append({"text": male_value, "gender": default_name_gender})
 
         if added_entries:
             rows.extend(added_entries)
             self._write_jsonl(jsonl_path, rows)
 
-        generated_rows = self._random_fio_rows(field, value, count=5)
+        generated_rows = self._fixed_gender_rows(field, male_value, female_value)
         self._append_csv_rows(generated_rows)
 
         self.log(
-            f"➕ Добавление [{field}] '{value}': добавлено в JSONL {len(added_entries)} записей, "
-            f"сгенерировано в data.csv {len(generated_rows)} строк"
+            f"➕ Добавление [{field}] '{male_value}'"
+            f"{' / ' + female_value if field in {'surname', 'patronymic'} else ''}: "
+            f"добавлено в JSONL {len(added_entries)} записей, сгенерировано в data.csv {len(generated_rows)} строк (5M/5F)"
         )
         self.dict_add_var.set("")
+        self.dict_add_female_var.set("")
 
     def remove_dictionary_word(self) -> None:
         field = self.dict_field_var.get().strip()
